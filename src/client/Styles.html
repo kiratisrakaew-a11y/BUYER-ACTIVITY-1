@@ -166,6 +166,21 @@ input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--primary)
 .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .filters .field { margin: 0; min-width: 150px; }
 
+/* Search-as-you-type field. The list is absolutely positioned so it floats over
+   whatever follows it; .modal-body sets no overflow, so nothing clips it. */
+.combo { position: relative; }
+.combo-list {
+  position: absolute; z-index: 10; left: 0; right: 0; top: calc(100% + 2px);
+  margin: 0; padding: 4px; list-style: none;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+  max-height: 240px; overflow-y: auto;
+}
+.combo-item { padding: 7px 10px; border-radius: var(--radius-sm); cursor: pointer; font-size: 14px; }
+.combo-item:hover { background: var(--surface-alt); }
+.combo-item[aria-selected="true"] { background: var(--primary-soft); color: var(--primary-dark); }
+.combo-note { margin-top: 5px; font-size: 12px; color: var(--text-muted); }
+
 /* ------------------------------------------------------------------ tables */
 
 .table-wrap { overflow-x: auto; }

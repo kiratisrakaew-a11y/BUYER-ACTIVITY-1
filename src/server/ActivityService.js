@@ -6,6 +6,12 @@
  *   because buyers cover for each other and the log has to say who really acted.
  *   Activity_Date is the time the work happened, which can differ from the time
  *   it was typed in; Created_At keeps the latter.
+ *
+ * Next_Action_Date is optional even when Next_Action is filled in: plenty of
+ * follow-ups are real work with no deadline attached, and forcing a made-up date
+ * on them only teaches people to type one. The cost is that an undated follow-up
+ * is never chased by the daily reminder — it lives on the Case timeline and in
+ * the My Cases column, and nowhere else.
  */
 var ActivityService = (function () {
 
@@ -62,7 +68,6 @@ var ActivityService = (function () {
     if (Utils.isBlank(values.Activity_Date)) values.Activity_Date = Utils.now();
     values.Next_Action_Done = Utils.toBool(values.Next_Action_Done);
 
-    assertNextActionConsistent(values);
     assertVendorOnCase(caseRecord.Case_ID, values.Vendor_ID);
     Validation.validate('Activities', values, { partial: false });
 
@@ -74,7 +79,6 @@ var ActivityService = (function () {
     if (Object.prototype.hasOwnProperty.call(values, 'Next_Action_Done')) {
       values.Next_Action_Done = Utils.toBool(values.Next_Action_Done);
     }
-    assertNextActionConsistent(Object.assign({}, existing, values));
     assertVendorOnCase(caseRecord.Case_ID, values.Vendor_ID);
     Validation.validate('Activities', values, { partial: true, existing: existing });
 
@@ -82,15 +86,6 @@ var ActivityService = (function () {
       actor: user.email,
       caseId: caseRecord.Case_ID
     });
-  }
-
-  /** SPEC §5.1 — a Next_Action without a due date can never be chased. */
-  function assertNextActionConsistent(values) {
-    if (Utils.isBlank(values.Next_Action)) return;
-    if (Utils.isBlank(values.Next_Action_Date)) {
-      throw Err.validation('เมื่อระบุสิ่งที่ต้องทำต่อ ต้องระบุวันที่ที่ต้องทำด้วย',
-        { field: 'Next_Action_Date' });
-    }
   }
 
   /**

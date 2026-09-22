@@ -287,6 +287,185 @@ var App = (function () {
     });
   }
 
+  /* --------------------------------------------------------------- combobox */
+
+  /**
+   * A text box that searches as you type and hands back an id.
+   *
+   * A plain <select> has to hold the whole register before the user can pick
+   * anything, which stops working the moment the register outgrows the server's
+   * result cap: the entries past the cap become unreachable rather than merely
+   * inconvenient. Searching server-side has no such ceiling.
+   *
+   * The visible box is deliberately not the field that submits. The form reads a
+   * hidden input that only a real selection ever writes to, so a half-typed name
+   * cannot be mistaken for a choice — the server would reject the name anyway,
+   * and it would reject it after the buyer had already written their note.
+   *
+   *   body:   App.combobox.html({ name: 'Vendor_ID', placeholder: '…', text: '…', value: '…' })
+   *   onOpen: App.combobox.wire(form, { name: 'Vendor_ID', search: fn, emptyText: '…' })
+   *
+   * `search(query)` returns a Promise of [{ id, label, hint }].
+   *
+   * The visible box carries id "<name>__input" so a <label for> can point at it.
+   * It must not take the id "<name>": a form element is reachable by id as well as
+   * by name, so that would make form.<name> a RadioNodeList whose .value is always
+   * empty, and every selection would submit as blank.
+   */
+  var combobox = (function () {
+
+    var DEBOUNCE_MS = 200;
+    var MAX_RESULTS = 20;
+
+    function html(options) {
+      var o = options || {};
+      return '<div class="combo" data-combo="' + esc(o.name) + '">' +
+        '<input type="text" class="combo-input" id="' + esc(o.name) + '__input" ' +
+          'autocomplete="off" role="combobox" ' +
+          'aria-expanded="false" aria-autocomplete="list" ' +
+          'placeholder="' + esc(o.placeholder || 'พิมพ์เพื่อค้นหา…') + '" ' +
+          'value="' + esc(o.text || '') + '">' +
+        '<input type="hidden" name="' + esc(o.name) + '" value="' + esc(o.value || '') + '">' +
+        '<ul class="combo-list" role="listbox" hidden></ul>' +
+        '<div class="combo-note" hidden></div>' +
+        '</div>';
+    }
+
+    function wire(form, options) {
+      var o = options || {};
+      var root = form.querySelector('[data-combo="' + o.name + '"]');
+      if (!root) return;                       // the field is not on this form
+
+      var input = root.querySelector('.combo-input');
+      var hidden = root.querySelector('input[type="hidden"]');
+      var list = root.querySelector('.combo-list');
+      var note = root.querySelector('.combo-note');
+
+      var items = [];
+      var active = -1;
+      var timer = null;
+      var seq = 0;                             // only the newest query may paint
+      var chosenText = input.value.trim();     // what the current id was picked as
+
+      function setNote(message) {
+        note.textContent = message || '';
+        note.hidden = !message;
+      }
+
+      function close() {
+        list.hidden = true;
+        input.setAttribute('aria-expanded', 'false');
+        active = -1;
+      }
+
+      function paint() {
+        if (!items.length) {
+          close();
+          return;
+        }
+        list.innerHTML = items.map(function (item, i) {
+          return '<li class="combo-item" role="option" data-index="' + i + '" ' +
+            'aria-selected="' + (i === active) + '">' + esc(item.label) +
+            (item.hint ? '<span class="faint"> · ' + esc(item.hint) + '</span>' : '') + '</li>';
+        }).join('');
+        list.hidden = false;
+        input.setAttribute('aria-expanded', 'true');
+      }
+
+      function choose(i) {
+        var item = items[i];
+        if (!item) return;
+        hidden.value = item.id;
+        input.value = item.label;
+        chosenText = input.value.trim();
+        setNote('');
+        close();
+      }
+
+      /** Anything other than an untouched selection means "nothing is chosen". */
+      function clearChoice() {
+        hidden.value = '';
+        chosenText = '';
+      }
+
+      function run(query) {
+        var mine = ++seq;
+        o.search(query).then(function (results) {
+          if (mine !== seq) return;            // a later keystroke already won
+          items = (results || []).slice(0, MAX_RESULTS);
+          active = -1;
+          paint();
+          setNote(!items.length && query ? (o.emptyText || 'ไม่พบรายการที่ตรงกับคำค้น') : '');
+        }).catch(function () {
+          if (mine !== seq) return;
+          items = [];
+          close();
+          setNote('ค้นหาไม่สำเร็จ กรุณาลองใหม่');
+        });
+      }
+
+      function schedule() {
+        if (timer) clearTimeout(timer);
+        var query = input.value.trim();
+        timer = setTimeout(function () { run(query); }, DEBOUNCE_MS);
+      }
+
+      input.addEventListener('input', function () {
+        clearChoice();
+        setNote('');
+        schedule();
+      });
+
+      input.addEventListener('focus', function () {
+        if (items.length) paint(); else run(input.value.trim());
+      });
+
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { close(); return; }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          if (!items.length) return;
+          e.preventDefault();
+          if (list.hidden) { paint(); return; }   // Escape closed it; reopen first
+          active = e.key === 'ArrowDown'
+            ? Math.min(active + 1, items.length - 1)
+            : Math.max(active - 1, 0);
+          paint();
+          var el = list.querySelector('[data-index="' + active + '"]');
+          if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+          return;
+        }
+        if (e.key === 'Enter' && !list.hidden && active >= 0) {
+          e.preventDefault();                  // Enter picks, it does not submit
+          choose(active);
+        }
+      });
+
+      // mousedown, not click: blur fires first and would close the list under the pointer.
+      list.addEventListener('mousedown', function (e) {
+        var li = e.target.closest('[data-index]');
+        if (!li) return;
+        e.preventDefault();
+        choose(Number(li.dataset.index));
+      });
+
+      input.addEventListener('blur', function () {
+        setTimeout(function () {
+          close();
+          // Text left behind that was never chosen is not a selection. Clearing it
+          // is what makes the empty box honest: nothing was picked.
+          if (input.value.trim() !== chosenText) {
+            var typed = input.value.trim();
+            clearChoice();
+            input.value = '';
+            if (typed) setNote(o.emptyText || 'ยังไม่ได้เลือกจากรายการ');
+          }
+        }, 120);
+      });
+    }
+
+    return { html: html, wire: wire };
+  })();
+
   /* ------------------------------------------------- views and case-detail tabs */
 
   /** view = { id, label, roles?, visible?(state), render(container, param) } */
@@ -390,6 +569,7 @@ var App = (function () {
     alertHtml: alertHtml,
     modal: modal,
     askReason: askReason,
+    combobox: combobox,
     confirmAction: confirmAction,
     registerView: registerView,
     registerCaseTab: registerCaseTab,

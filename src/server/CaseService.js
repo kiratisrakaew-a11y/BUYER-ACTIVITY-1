@@ -186,8 +186,13 @@ var CaseService = (function () {
   }
 
   /**
-   * The earliest outstanding Next_Action per Case, which is what My Cases
+   * The most pressing outstanding Next_Action per Case, which is what My Cases
    * highlights when it is overdue (SPEC §8.1).
+   *
+   * A follow-up with no due date is real work, but it is not the one a buyer
+   * needs reminding of, so it only ever shows when the Case has nothing dated
+   * outstanding. Ranking the other way round would let an undated note hide a
+   * deadline that has already passed.
    */
   function nextActionByCase(caseIds) {
     if (caseIds.length === 0) return {};
@@ -203,7 +208,7 @@ var CaseService = (function () {
     }).forEach(function (a) {
       var due = Utils.startOfDay(a.Next_Action_Date);
       var current = out[a.Case_ID];
-      if (current && current.dueTime !== null && due && due.getTime() >= current.dueTime) return;
+      if (current && !isMorePressing(due, current.dueTime)) return;
       out[a.Case_ID] = {
         activityId: a.Activity_ID,
         text: a.Next_Action,
@@ -213,6 +218,13 @@ var CaseService = (function () {
       };
     });
     return out;
+  }
+
+  /** Dated beats undated; between two dated ones the earlier due date wins. */
+  function isMorePressing(due, heldDueTime) {
+    if (heldDueTime === null) return true;
+    if (due === null) return false;
+    return due.getTime() < heldDueTime;
   }
 
   /**

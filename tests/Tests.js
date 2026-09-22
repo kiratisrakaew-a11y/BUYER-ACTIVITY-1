@@ -999,18 +999,88 @@ test('Performed_By cannot be spoofed from the client', function () {
   });
 });
 
-test('a next action without a due date is rejected', function () {
+test('a next action may be recorded without a due date', function () {
   withUsers(function () {
     var caseId = createCaseAs(USERS.buyerA);
     asUser(USERS.buyerA, function () {
-      assertApiError(api_saveActivity(caseId, activityPayload({ Next_Action: 'โทรตามใบเสนอราคา' })),
-        'VALIDATION', 'due date required');
+      var saved = assertApiOk(api_saveActivity(caseId, activityPayload({
+        Next_Action: 'รอหน่วยงานยืนยันสเปก'
+      }))).activity;
+      assertEquals(saved.Next_Action, 'รอหน่วยงานยืนยันสเปก', 'the follow-up is kept');
+      var stored = Repository.requireById('Activities', saved.Activity_ID);
+      assertEquals(Utils.isBlank(stored.Next_Action_Date), true, 'and the due date cell stays empty');
+
       assertApiOk(api_saveActivity(caseId, activityPayload({
-        Next_Action: 'โทรตามใบเสนอราคา', Next_Action_Date: '2026-02-01'
+        Next_Action: 'โทรตามหน่วยงาน', Next_Action_Date: '2026-02-01'
       })));
       assertApiError(api_saveActivity(caseId, activityPayload({ Activity_Type: 'NOT_A_TYPE' })),
         'VALIDATION', 'activity type must be in Config_Lists');
     });
+  });
+});
+
+test('an undated follow-up never hides a dated one on the Case list', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+    var overdueDate = Utils.formatDateForTest(Utils.addDays(Utils.today(), -2));
+
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_saveActivity(caseId, activityPayload({
+        Activity_Date: '2026-01-10T03:00:00.000Z',
+        Next_Action: 'ตามเอกสารที่เลยกำหนด', Next_Action_Date: overdueDate
+      })));
+      // Written later, so it would win on insertion order alone.
+      assertApiOk(api_saveActivity(caseId, activityPayload({
+        Activity_Date: '2026-01-20T03:00:00.000Z',
+        Next_Action: 'เรื่องที่ยังไม่มีกำหนด'
+      })));
+    });
+
+    var listed = asUser(USERS.buyerA, function () {
+      return assertApiOk(api_listCases({ scope: 'mine' })).cases[0];
+    });
+    assertEquals(listed.nextAction.text, 'ตามเอกสารที่เลยกำหนด', 'the dated one is the pressing one');
+    assertEquals(listed.nextAction.overdue, true, 'and it is still flagged overdue');
+
+    // Once the dated one is ticked off, the undated one is all that is left.
+    var dated = ActivityService.listForCase(caseId).filter(function (a) {
+      return a.Next_Action === 'ตามเอกสารที่เลยกำหนด';
+    })[0];
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_setNextActionDone(dated.Activity_ID, true, dated.Version));
+    });
+
+    var after = asUser(USERS.buyerA, function () {
+      return assertApiOk(api_listCases({ scope: 'mine' })).cases[0];
+    });
+    assertEquals(after.nextAction.text, 'เรื่องที่ยังไม่มีกำหนด', 'the undated one shows when nothing else is due');
+    assertEquals(after.nextAction.overdue, false, 'an undated follow-up is never overdue');
+  });
+});
+
+test('an undated follow-up is never chased by the daily reminder', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_saveActivity(caseId, activityPayload({
+        Next_Action: 'เรื่องที่ไม่มีกำหนด'
+      })));
+    });
+    assertDeepEquals(Notification.buildDailyDigests(), {}, 'nothing to remind anyone about');
+
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_saveActivity(caseId, activityPayload({
+        Activity_Date: '2026-01-21T03:00:00.000Z',
+        Next_Action: 'เรื่องที่เลยกำหนด',
+        Next_Action_Date: Utils.formatDateForTest(Utils.addDays(Utils.today(), -1))
+      })));
+    });
+
+    var digests = Notification.buildDailyDigests();
+    var mine = digests[USERS.buyerA];
+    assertEquals(mine.overdue.length, 1, 'the dated one is chased');
+    assertEquals(mine.overdue[0].text, 'เรื่องที่เลยกำหนด', 'and it is the right one');
+    assertEquals(mine.upcoming.length, 0, 'the undated one is not quietly filed as upcoming');
   });
 });
 

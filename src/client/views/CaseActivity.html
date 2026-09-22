@@ -88,19 +88,13 @@
         '<input type="checkbox" data-done="' + App.esc(a.Activity_ID) + '"' +
           (a.Next_Action_Done ? ' checked' : '') + (canTouch ? '' : ' disabled') + '>' +
         '<span>สิ่งที่ต้องทำต่อ: ' + App.esc(a.Next_Action) +
-          ' (ภายใน ' + App.esc(App.fmtDate(a.Next_Action_Date)) + ')' +
+          (a.Next_Action_Date ? ' (ภายใน ' + App.esc(App.fmtDate(a.Next_Action_Date)) + ')' : '') +
           (overdue ? ' — เลยกำหนดแล้ว' : '') + '</span>' +
       '</label></div>';
   }
 
   function openForm(ctx, activity) {
     var a = activity || {};
-    // The register is fetched when the dialog opens rather than shipped with the
-    // Case: most activities name no vendor at all, and the list is the same one
-    // the Vendors screen shows.
-    var vendorOptions = '<option value="">— ไม่เจาะจงผู้ขาย —</option>' +
-      (a.Vendor_ID ? '<option value="' + App.esc(a.Vendor_ID) + '" selected>' +
-        App.esc(ctx.vendorNames[a.Vendor_ID] || a.Vendor_ID) + '</option>' : '');
 
     App.modal({
       title: activity ? 'แก้ไขกิจกรรม' : 'บันทึกกิจกรรม',
@@ -115,14 +109,19 @@
           App.optionsFor('ACTIVITY_TYPE', a.Activity_Type, 'M1') + '</select>', true) +
         App.caseForm.field('Channel', 'ช่องทาง',
           '<select name="Channel">' + App.optionsFor('CHANNEL', a.Channel) + '</select>') +
-        App.caseForm.field('Vendor_ID', 'เกี่ยวกับผู้ขาย',
-          '<select name="Vendor_ID">' + vendorOptions + '</select>') +
+        App.caseForm.field('Vendor_ID__input', 'เกี่ยวกับผู้ขาย (ถ้ามี)',
+          App.combobox.html({
+            name: 'Vendor_ID',
+            placeholder: 'พิมพ์ชื่อผู้ขาย หรือเลขผู้เสียภาษี',
+            text: a.Vendor_ID ? (ctx.vendorNames[a.Vendor_ID] || a.Vendor_ID) : '',
+            value: a.Vendor_ID || ''
+          })) +
         '<div class="field span-all"><label>รายละเอียดกิจกรรม <span class="req">*</span></label>' +
           '<textarea name="Activity_Description" required maxlength="2000">' +
           App.esc(a.Activity_Description || '') + '</textarea></div>' +
         App.caseForm.field('Next_Action', 'สิ่งที่ต้องทำต่อ',
           '<input type="text" name="Next_Action" maxlength="1000" value="' + App.esc(a.Next_Action || '') + '">') +
-        App.caseForm.field('Next_Action_Date', 'ภายในวันที่ (บังคับถ้ามีสิ่งที่ต้องทำต่อ)',
+        App.caseForm.field('Next_Action_Date', 'ภายในวันที่ (ถ้ามี)',
           '<input type="date" name="Next_Action_Date" value="' +
           App.esc(App.toInputDate(a.Next_Action_Date)) + '">') +
         App.caseForm.field('Attachment_URL', 'ลิงก์ไฟล์แนบ (ถ้ามี)',
@@ -148,20 +147,28 @@
             ctx.refresh();
           }).catch(App.showError);
       },
-      onOpen: function (form) { fillVendorOptions(form, a.Vendor_ID); }
+      onOpen: function (form) {
+        App.combobox.wire(form, {
+          name: 'Vendor_ID',
+          search: searchVendors,
+          emptyText: 'ไม่พบผู้ขายรายนี้ในทะเบียน — เพิ่มได้ที่เมนู "ผู้ขาย" ' +
+            'หรือเว้นว่างไว้ถ้ากิจกรรมนี้ไม่เจาะจงผู้ขาย'
+        });
+      }
     });
   }
 
-  /** Loads the vendor register into the picker without holding up the dialog. */
-  function fillVendorOptions(form, selected) {
-    App.api('api_searchVendors', '').then(function (data) {
-      form.Vendor_ID.innerHTML = '<option value="">— ไม่เจาะจงผู้ขาย —</option>' +
-        data.vendors.map(function (v) {
-          return '<option value="' + App.esc(v.Vendor_ID) + '"' +
-            (v.Vendor_ID === selected ? ' selected' : '') + '>' + App.esc(v.Vendor_Name) + '</option>';
-        }).join('');
-    }).catch(function () {
-      // The picker is optional; an activity records fine without a vendor on it.
+  /**
+   * The register is searched on the server as the buyer types, rather than
+   * shipped with the Case: most activities name no vendor at all, and a register
+   * that outgrows the server's result cap would otherwise hide its newest entries.
+   * The tax id rides along as a hint, because two suppliers can share a name.
+   */
+  function searchVendors(query) {
+    return App.api('api_searchVendors', query).then(function (data) {
+      return data.vendors.map(function (v) {
+        return { id: v.Vendor_ID, label: v.Vendor_Name, hint: v.Tax_ID || '' };
+      });
     });
   }
 
