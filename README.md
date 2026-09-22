@@ -75,10 +75,10 @@ clasp จะเอา path มาเป็น *ชื่อไฟล์* ที�
 ### ⚠️ กับดัก: `rootDir` ต้องไม่หาย
 
 บรรทัด `"rootDir": "src"` ใน `.clasp.json` คือสิ่งที่ทำให้ `src` ไม่ติดมาในชื่อไฟล์
-`clasp create` จะเขียน `.clasp.json` ใหม่ทับ — ถ้า `rootDir` หลุดไป ชื่อไฟล์จะกลายเป็น
+`clasp create-script` จะเขียน `.clasp.json` ใหม่ทับ — ถ้า `rootDir` หลุดไป ชื่อไฟล์จะกลายเป็น
 `src/server/Auth` และ `src/client/Index`
 
-repo นี้มี `.clasp.json` อยู่แล้ว `clasp create` จึงจะ **refuse** (`Project file already exists`)
+repo นี้มี `.clasp.json` อยู่แล้ว `clasp create-script` จึงจะ **refuse** (`Project file already exists`)
 ซึ่งเป็นเรื่องดี — ให้สร้างโปรเจกต์จากหน้าเว็บแล้วแก้เฉพาะ `scriptId` ตามขั้นตอนข้างล่าง
 
 > ระบบทนต่อกรณีนี้อยู่แล้ว (`resolveHtmlName()` ใน `Main.js` จะไล่ลองชื่อสำรองให้)
@@ -104,7 +104,7 @@ clasp login
 # คัดลอก Script ID จาก Project Settings มาใส่ .clasp.json — อย่าแตะ rootDir
 
 clasp push      # 33 ไฟล์: server 23 + client 10
-clasp open
+clasp open-script
 ```
 
 จากนั้นในหน้าต่าง Apps Script:
@@ -120,8 +120,15 @@ clasp open
 
 > ⚠️ **ห้ามแชร์ไฟล์ DB ให้ผู้ใช้ทั่วไป** ระบบถูกออกแบบให้ผู้ใช้เข้าถึงข้อมูลผ่านหน้าเว็บเท่านั้น
 
-ทุกครั้งที่แก้โค้ดแล้ว `clasp push` ต้อง `Deploy` → `Manage deployments` → แก้ deployment เดิมเป็น
-`New version` ด้วย ผู้ใช้จึงจะเห็นของใหม่
+**`clasp push` ไม่ถึงผู้ใช้** — URL ที่แจกไปผูกกับ version ที่ตรึงไว้ตอน deploy ไม่ใช่โค้ดล่าสุด
+ทุกครั้งที่แก้โค้ดแล้ว push ต้องสร้าง version ใหม่ให้ deployment เดิมด้วย
+
+```bash
+clasp create-deployment -i <deploymentId> -d "สรุปสั้นๆ ว่าแก้อะไร"
+```
+
+หรือผ่านหน้าเว็บ: `Deploy` → `Manage deployments` → แก้ deployment เดิมเป็น `New version`
+รายละเอียดและวิธีตรวจว่าสำเร็จอยู่ใน [`docs/INSTALL.md`](docs/INSTALL.md) หัวข้อ 10
 
 ---
 
