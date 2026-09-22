@@ -1,0 +1,144 @@
+<script>
+/**
+ * Closing a Case, the remaining status changes, and reopen.
+ *
+ * The buttons offered come from StatusEngine.allowedNextFor on the server, so
+ * the screen can never offer a move the server would refuse, and a move that is
+ * backwards or a cancellation asks for its reason before it is sent (SPEC §6.3).
+ */
+(function () {
+
+  /* ------------------------------------------------------- change status */
+
+  App.registerCaseHeaderAction({
+    label: 'เปลี่ยนสถานะ',
+    className: 'primary',
+    visible: function (ctx) {
+      return ctx.canEdit && (ctx.bundle.nextStatuses || []).some(function (s) {
+        return s.code !== 'CLOSED';
+      });
+    },
+    run: openStatusDialog
+  });
+
+  function openStatusDialog(ctx) {
+    // Closing has its own button, because it asks for the PR number that the
+    // rule then checks. Offering it here as well would be a second path that
+    // always ends in the same refusal.
+    var options = ctx.bundle.nextStatuses.filter(function (s) {
+      return s.code !== 'CLOSED';
+    }).map(function (s) {
+      return '<label class="field-inline" style="margin-bottom:8px">' +
+        '<input type="radio" name="toStatus" value="' + App.esc(s.code) + '" required>' +
+        '<span>' + App.esc(s.label) +
+          (s.backwards ? ' <span class="badge warn">ย้อนสถานะ</span>' : '') +
+          (s.requiresReason ? ' <span class="faint">ต้องระบุเหตุผล</span>' : '') +
+        '</span></label>';
+    }).join('');
+
+    var blockers = ctx.rules ? ctx.rules.blockers : [];
+
+    App.modal({
+      title: 'เปลี่ยนสถานะงาน ' + ctx.caseId,
+      submitLabel: 'เปลี่ยนสถานะ',
+      body:
+        App.alertHtml('error', 'ยังมีเงื่อนไขที่ไม่ผ่าน', blockers) +
+        '<p class="muted">สถานะปัจจุบัน: <strong>' + App.esc(App.statusLabel(ctx.caseRecord.Status)) +
+          '</strong></p>' + options +
+        '<div class="field" style="margin-top:12px"><label for="statusReason">เหตุผล</label>' +
+          '<textarea id="statusReason" name="reason" maxlength="500" ' +
+          'placeholder="บังคับเมื่อย้อนสถานะหรือยกเลิกงาน"></textarea></div>',
+      onSubmit: function (form, close) {
+        var chosen = form.querySelector('input[name="toStatus"]:checked');
+        if (!chosen) return;
+        App.api('api_changeStatus', ctx.caseId, chosen.value, ctx.caseRecord.Version,
+          form.reason.value.trim())
+          .then(function (result) {
+            close();
+            App.toast('เปลี่ยนสถานะเป็น ' + App.statusLabel(result.to) + ' แล้ว', 'ok');
+            App.showWarnings(result.warnings);
+            ctx.refresh();
+          }).catch(App.showError);
+      }
+    });
+  }
+
+  /* --------------------------------------------------------------- close */
+
+  App.registerCaseHeaderAction({
+    label: 'ปิดงาน',
+    className: 'primary',
+    visible: function (ctx) {
+      return ctx.canEdit && App.state.permissions.canCloseCase &&
+        (ctx.bundle.nextStatuses || []).some(function (s) { return s.code === 'CLOSED'; });
+    },
+    run: openCloseDialog
+  });
+
+  /**
+   * The PR number and the buying company are asked for here rather than on the
+   * edit form, because they are the evidence the closure rests on: the server
+   * writes them and the status in one update, so neither can exist without the
+   * other.
+   */
+  function openCloseDialog(ctx) {
+    var c = ctx.caseRecord;
+    App.modal({
+      title: 'ปิดงาน ' + c.Case_ID,
+      submitLabel: 'ปิดงาน',
+      body:
+        '<p class="muted">กรอกเลข PR ที่ออกจากระบบ EPICOR และบริษัทที่จัดซื้อ ' +
+          'ระบบจะบันทึกทั้งสองอย่างพร้อมกับการปิดงาน</p>' +
+        '<div class="grid two">' +
+          App.caseForm.field('PR_No', 'เลข PR (EPICOR)',
+            '<input type="text" name="PR_No" required maxlength="50" autocomplete="off" value="' +
+            App.esc(c.PR_No || '') + '">', true) +
+          App.caseForm.field('PR_Date', 'วันที่ออก PR',
+            '<input type="date" name="PR_Date" value="' + App.esc(App.toInputDate(c.PR_Date)) + '">') +
+          '<div class="field span-all"><label for="Company_Code">บริษัทที่จัดซื้อ <span class="req">*</span></label>' +
+            '<select id="Company_Code" name="Company_Code" required>' +
+            App.optionsFor('COMPANY', c.Company_Code) + '</select></div>' +
+          '<div class="field span-all"><label for="closeNote">หมายเหตุ (ไม่บังคับ)</label>' +
+            '<textarea id="closeNote" name="reason" maxlength="500"></textarea></div>' +
+        '</div>',
+      onSubmit: function (form, close) {
+        var prNo = form.PR_No.value.trim();
+        if (!prNo || !form.Company_Code.value) return;
+        App.api('api_closeCase', ctx.caseId, {
+          prNo: prNo,
+          prDate: form.PR_Date.value,
+          companyCode: form.Company_Code.value,
+          version: c.Version,
+          reason: form.reason.value.trim()
+        }).then(function () {
+          close();
+          App.toast('ปิดงานแล้ว', 'ok');
+          ctx.refresh();
+        }).catch(App.showError);
+      }
+    });
+  }
+
+  /* -------------------------------------------------------------- reopen */
+
+  App.registerCaseHeaderAction({
+    label: 'Reopen',
+    visible: function (ctx) {
+      return App.state.permissions.canReopen &&
+        (ctx.caseRecord.Status === 'CLOSED' || ctx.caseRecord.Status === 'CANCELLED');
+    },
+    run: function (ctx) {
+      App.askReason('เปิดงานที่ปิดไปแล้ว',
+        'ระบบจะย้อนงานกลับไปยังสถานะก่อนหน้าที่อ่านจากประวัติการแก้ไข')
+        .then(function (reason) {
+          App.api('api_reopenCase', ctx.caseId, reason).then(function (result) {
+            App.toast('เปิดงานใหม่แล้ว กลับไปที่ ' + App.statusLabel(result.restoredTo), 'ok');
+            App.showWarnings(result.warnings);
+            ctx.refresh();
+          }).catch(App.showError);
+        });
+    }
+  });
+
+})();
+</script>

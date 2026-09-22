@@ -1,0 +1,117 @@
+<script>
+/**
+ * Team View — who is carrying what, what has slipped, and what is waiting on a
+ * decision (SPEC §8.4). Open to HEAD, AUDITOR and ADMIN; only HEAD can move work.
+ */
+(function () {
+
+  App.registerView({
+    id: 'team',
+    label: 'ภาพรวมทีม',
+    visible: function (state) { return state.permissions.canSeeTeamView; },
+    render: render
+  });
+
+  function render(host) {
+    host.innerHTML = '<div class="loading"><span class="spinner"></span> กำลังรวบรวมข้อมูลทีม…</div>';
+    App.api('api_teamView').then(function (data) {
+      host.innerHTML = summary(data) + data.buyers.map(buyerCard).join('') +
+        (data.buyers.length ? '' : '<div class="card"><div class="empty">ยังไม่มีงานที่เปิดอยู่</div></div>');
+
+      host.querySelectorAll('[data-open]').forEach(function (b) {
+        b.onclick = function () { App.go('case/' + encodeURIComponent(b.dataset.open)); };
+      });
+      host.querySelectorAll('[data-reassign]').forEach(function (b) {
+        b.onclick = function () { openReassign(host, b.dataset.reassign, b.dataset.owner); };
+      });
+    }).catch(function (error) {
+      host.innerHTML = '<div class="alert error">' + App.esc(error.message) + '</div>';
+    });
+  }
+
+  function summary(data) {
+    return '<div class="page-title"><h2>ภาพรวมทีม</h2><span class="spacer"></span>' +
+      '<span class="badge info">งานที่เปิดอยู่ ' + App.esc(data.totals.openCases) + '</span> ' +
+      '<span class="badge ' + (data.totals.overdueActions ? 'bad' : 'ok') + '">เลยกำหนด ' +
+        App.esc(data.totals.overdueActions) + '</span> ' +
+      '<span class="badge ' + (data.totals.readyToClose ? 'ok' : '') + '">พร้อมปิดงาน ' +
+        App.esc(data.totals.readyToClose) + '</span>' +
+      '</div>';
+  }
+
+  function buyerCard(buyer) {
+    return '<div class="card">' +
+      '<div class="card-header">' +
+        '<h2>' + App.esc(buyer.name) + '</h2>' +
+        '<span class="faint">' + App.esc(buyer.email) + '</span>' +
+        (buyer.inactive ? ' <span class="badge bad">ผู้ใช้ไม่พร้อมใช้งาน</span>' : '') +
+        '<span class="spacer"></span>' +
+        '<span class="badge">งานเปิดอยู่ ' + App.esc(buyer.openCases) + '</span> ' +
+        (buyer.overdueActions ? '<span class="badge bad">เลยกำหนด ' + App.esc(buyer.overdueActions) + '</span> ' : '') +
+        (buyer.readyToClose ? '<span class="badge ok">พร้อมปิดงาน ' + App.esc(buyer.readyToClose) + '</span>' : '') +
+      '</div>' +
+      '<div class="card-body tight">' + caseTable(buyer) + '</div></div>';
+  }
+
+  function caseTable(buyer) {
+    if (!buyer.cases.length) return '<div class="empty">ไม่มีงานที่เปิดอยู่</div>';
+    var rows = buyer.cases.map(function (c) {
+      var overdue = c.nextAction && c.nextAction.overdue;
+      return '<tr class="' + (overdue ? 'overdue' : '') + '">' +
+        '<td class="nowrap"><button type="button" class="link-btn" data-open="' + App.esc(c.Case_ID) + '">' +
+          App.esc(c.Case_ID) + '</button></td>' +
+        '<td>' + App.esc(c.Description) + '</td>' +
+        '<td class="nowrap"><span class="badge ' + App.statusBadgeClass(c.Status) + '">' +
+          App.esc(App.statusLabel(c.Status)) + '</span></td>' +
+        '<td class="nowrap">' + (c.readiness && c.readiness.ok
+          ? '<span class="badge ok">พร้อมปิดงาน</span>'
+          : '<span class="faint" title="' +
+            App.esc(c.readiness ? c.readiness.blockers.join(' · ') : '') + '">ยังไม่มีเลข PR</span>') + '</td>' +
+        '<td>' + (c.nextAction
+          ? App.esc(c.nextAction.text) + '<div class="faint">' +
+            (overdue ? '<span class="badge bad">เลยกำหนด</span> ' : '') +
+            App.esc(App.fmtDate(c.nextAction.date)) + '</div>'
+          : '<span class="faint">—</span>') + '</td>' +
+        '<td class="nowrap">' + (App.state.permissions.canReassign
+          ? '<button type="button" class="subtle small" data-reassign="' + App.esc(c.Case_ID) +
+            '" data-owner="' + App.esc(c.Buyer_Owner) + '">โอนงาน</button>'
+          : '') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    return '<div class="table-wrap"><table><thead><tr>' +
+      '<th>รหัสงาน</th><th>รายละเอียด</th><th>สถานะ</th><th>เลข PR</th>' +
+      '<th>สิ่งที่ต้องทำต่อ</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function openReassign(host, caseId, currentOwner) {
+    var options = App.state.buyers
+      .filter(function (b) { return b.email !== currentOwner; })
+      .map(function (b) {
+        return '<option value="' + App.esc(b.email) + '">' + App.esc(b.name) +
+          ' (' + App.esc(b.email) + ')</option>';
+      }).join('');
+
+    App.modal({
+      title: 'โอนงาน ' + caseId,
+      submitLabel: 'โอนงาน',
+      body:
+        '<p class="muted">เจ้าของงานปัจจุบัน: <strong>' + App.esc(currentOwner) + '</strong></p>' +
+        '<div class="field"><label for="newOwner">โอนให้ <span class="req">*</span></label>' +
+          '<select id="newOwner" name="newOwner" required>' +
+          '<option value="">— เลือกผู้รับโอน —</option>' + options + '</select></div>' +
+        '<div class="field"><label for="reassignReason">เหตุผล <span class="req">*</span></label>' +
+          '<textarea id="reassignReason" name="reason" required maxlength="500"></textarea></div>' +
+        '<p class="faint">ระบบจะแจ้งอีเมลถึงทั้งเจ้าของงานเดิมและผู้รับโอน</p>',
+      onSubmit: function (form, close) {
+        App.api('api_reassignCase', caseId, form.newOwner.value, form.reason.value.trim())
+          .then(function () {
+            close();
+            App.toast('โอนงานแล้ว', 'ok');
+            render(host);
+          }).catch(App.showError);
+      }
+    });
+  }
+})();
+</script>

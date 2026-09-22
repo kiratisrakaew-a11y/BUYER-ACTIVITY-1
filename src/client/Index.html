@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ระบบติดตามกิจกรรมจัดซื้อ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600&display=swap" rel="stylesheet">
+  <?!= include('client/Styles'); ?>
+</head>
+<body>
+  <div id="busyBar" class="busy" style="display:none"></div>
+
+  <header class="app-header">
+    <h1>ระบบติดตามกิจกรรมจัดซื้อ</h1>
+    <span class="spacer"></span>
+    <div class="app-user">
+      <strong><?= userName ?></strong>
+      <?= userEmail ?> · <?= userRole ?>
+    </div>
+  </header>
+
+  <nav class="app-nav" id="mainNav" aria-label="เมนูหลัก"></nav>
+  <main id="app"></main>
+  <div id="toastHost" aria-live="polite"></div>
+
+  <?!= include('client/App.js'); ?>
+  <?!= include('client/views/MyCases'); ?>
+  <?!= include('client/views/CaseDetail'); ?>
+  <?!= include('client/views/CaseStatus'); ?>
+  <?!= include('client/views/CaseActivity'); ?>
+  <?!= include('client/views/CaseHistory'); ?>
+  <?!= include('client/views/Vendors'); ?>
+  <?!= include('client/views/TeamView'); ?>
+
+  <script>App.start();</script>
+</body>
+</html>

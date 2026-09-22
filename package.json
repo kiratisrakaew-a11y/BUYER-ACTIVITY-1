@@ -1,0 +1,10 @@
+{
+  "name": "buyer-procurement-activity-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ระบบติดตามกิจกรรมจัดซื้อของ Buyer — ปิดงานด้วยเลข PR จากระบบ EPICOR บน Google Apps Script + Google Sheets",
+  "scripts": {
+    "test": "node tests/node/run.js",
+    "check": "node -e \"require('fs').readdirSync('src/server').filter(f=>f.endsWith('.js')).forEach(f=>require('child_process').execSync('node --check src/server/'+f))\" && echo 'syntax OK'"
+  }
+}

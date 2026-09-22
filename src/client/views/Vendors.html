@@ -1,0 +1,169 @@
+<script>
+/**
+ * Vendors — the vendor master: search, create and correct (SPEC §8.3).
+ *
+ * Contact details are personal data under PDPA; they are shown to buyers here
+ * because the work needs them, and never leave the app in a notification e-mail.
+ */
+(function () {
+
+  var query = '';
+
+  function render(host) {
+    host.innerHTML =
+      '<div class="page-title"><h2>ผู้ขาย</h2><span class="spacer"></span>' +
+        (App.state.permissions.canCreateVendor
+          ? '<button type="button" class="primary" id="newVendorBtn">+ เพิ่มผู้ขายใหม่</button>' : '') +
+      '</div>' +
+      '<div class="card"><div class="card-body">' +
+        '<div class="filters">' +
+          '<div class="field" style="min-width:280px"><label for="vq">ค้นหา</label>' +
+            '<input type="search" id="vq" placeholder="ชื่อผู้ขาย / เลขผู้เสียภาษี / รหัส / หมวดสินค้า"></div>' +
+          '<button type="button" class="primary" id="searchBtn">ค้นหา</button>' +
+        '</div>' +
+      '</div></div>' +
+      '<div class="card"><div class="card-body tight" id="vendorList"></div></div>';
+
+    host.querySelector('#vq').value = query;
+    host.querySelector('#searchBtn').onclick = function () {
+      query = host.querySelector('#vq').value.trim();
+      load(host);
+    };
+    host.querySelector('#vq').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') host.querySelector('#searchBtn').click();
+    });
+    var create = host.querySelector('#newVendorBtn');
+    if (create) create.onclick = function () { openVendorForm(host, null); };
+
+    load(host);
+  }
+
+  function load(host) {
+    var list = host.querySelector('#vendorList');
+    list.innerHTML = '<div class="loading"><span class="spinner"></span> กำลังค้นหา…</div>';
+    App.api('api_searchVendors', query).then(function (data) {
+      list.innerHTML = table(data.vendors);
+      list.querySelectorAll('[data-edit]').forEach(function (b) {
+        b.onclick = function () { openVendorForm(host, findVendor(data.vendors, b.dataset.edit)); };
+      });
+    }).catch(function (error) {
+      list.innerHTML = '<div class="alert error">' + App.esc(error.message) + '</div>';
+    });
+  }
+
+  function findVendor(vendors, id) {
+    return vendors.filter(function (v) { return v.Vendor_ID === id; })[0];
+  }
+
+  function table(vendors) {
+    if (!vendors.length) return '<div class="empty">ไม่พบผู้ขายที่ตรงกับคำค้น</div>';
+    var rows = vendors.map(function (v) {
+      return '<tr>' +
+        '<td class="nowrap">' + App.esc(v.Vendor_ID) +
+          (v.Vendor_No ? '<div class="faint">ERP ' + App.esc(v.Vendor_No) + '</div>' : '') + '</td>' +
+        '<td>' + App.esc(v.Vendor_Name) +
+          (v.Categories ? '<div class="faint">' + App.esc(v.Categories) + '</div>' : '') + '</td>' +
+        '<td class="nowrap">' + App.esc(v.Tax_ID) + '</td>' +
+        '<td>' + App.esc(v.Contact_Name || '') +
+          (v.Contact_Phone ? '<div class="faint">' + App.esc(v.Contact_Phone) + '</div>' : '') + '</td>' +
+        '<td class="nowrap"><span class="badge ' + vendorStatusClass(v.Vendor_Status) + '">' +
+          App.esc(App.labelOf('VENDOR_STATUS', v.Vendor_Status)) + '</span></td>' +
+        '<td class="nowrap">' +
+          (App.state.permissions.canCreateVendor
+            ? '<button type="button" class="subtle small" data-edit="' + App.esc(v.Vendor_ID) + '">แก้ไข</button>'
+            : '') +
+        '</td></tr>';
+    }).join('');
+
+    return '<div class="table-wrap"><table><thead><tr>' +
+      '<th>รหัส</th><th>ชื่อผู้ขาย</th><th>เลขผู้เสียภาษี</th><th>ผู้ติดต่อ</th><th>สถานะ</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function vendorStatusClass(code) {
+    if (code === 'APPROVED') return 'ok';
+    if (code === 'BLACKLIST') return 'bad';
+    if (code === 'INACTIVE') return 'warn';
+    return 'info';
+  }
+
+  function openVendorForm(host, vendor) {
+    var v = vendor || {};
+    var isEdit = !!vendor;
+    var canSetStatus = App.state.permissions.canSetVendorApproval;
+
+    App.modal({
+      title: isEdit ? 'แก้ไขผู้ขาย ' + v.Vendor_ID : 'เพิ่มผู้ขายใหม่',
+      submitLabel: 'บันทึก',
+      wide: true,
+      body: '<div class="grid two">' +
+        App.caseForm.field('Vendor_Name', 'ชื่อผู้ขาย',
+          '<input type="text" name="Vendor_Name" required maxlength="250" value="' +
+          App.esc(v.Vendor_Name || '') + '">', true) +
+        App.caseForm.field('Tax_ID', 'เลขประจำตัวผู้เสียภาษี (13 หลัก)',
+          '<input type="text" name="Tax_ID" required maxlength="20" inputmode="numeric" value="' +
+          App.esc(v.Tax_ID || '') + '">', true) +
+        App.caseForm.field('Vendor_No', 'รหัสผู้ขายใน ERP (เติมภายหลังได้)',
+          '<input type="text" name="Vendor_No" maxlength="50" value="' + App.esc(v.Vendor_No || '') + '">') +
+        App.caseForm.field('Categories', 'หมวดสินค้า/บริการ (คั่นด้วยจุลภาค)',
+          '<input type="text" name="Categories" maxlength="500" value="' + App.esc(v.Categories || '') + '">') +
+        App.caseForm.field('Contact_Name', 'ชื่อผู้ติดต่อ',
+          '<input type="text" name="Contact_Name" maxlength="150" value="' + App.esc(v.Contact_Name || '') + '">') +
+        App.caseForm.field('Contact_Phone', 'เบอร์โทรศัพท์',
+          '<input type="text" name="Contact_Phone" maxlength="50" value="' + App.esc(v.Contact_Phone || '') + '">') +
+        App.caseForm.field('Contact_Email', 'อีเมล',
+          '<input type="email" name="Contact_Email" maxlength="150" value="' + App.esc(v.Contact_Email || '') + '">') +
+        (isEdit && canSetStatus
+          ? App.caseForm.field('Vendor_Status', 'สถานะผู้ขาย',
+            '<select name="Vendor_Status">' + App.optionsFor('VENDOR_STATUS', v.Vendor_Status, null, false) +
+            '</select>')
+          : '') +
+        '<div class="field span-all"><label>ที่อยู่</label>' +
+          '<textarea name="Address" maxlength="1000">' + App.esc(v.Address || '') + '</textarea></div>' +
+        '<div class="field span-all"><label>หมายเหตุ</label>' +
+          '<textarea name="Remark" maxlength="1000">' + App.esc(v.Remark || '') + '</textarea></div>' +
+        (isEdit
+          ? '<div class="field span-all"><label>เหตุผลในการแก้ไข</label>' +
+            '<input type="text" name="reason" maxlength="500"></div>'
+          : '') +
+        '</div>' +
+        '<p class="faint">ข้อมูลผู้ติดต่อเป็นข้อมูลส่วนบุคคล เก็บไว้เพื่อวัตถุประสงค์การจัดซื้อเท่านั้น ' +
+          'และจะไม่ถูกส่งออกในอีเมลแจ้งเตือน</p>',
+      onSubmit: function (form, close) {
+        var payload = {
+          Vendor_Name: form.Vendor_Name.value.trim(),
+          Tax_ID: form.Tax_ID.value.trim(),
+          Vendor_No: form.Vendor_No.value.trim(),
+          Categories: form.Categories.value.trim(),
+          Contact_Name: form.Contact_Name.value.trim(),
+          Contact_Phone: form.Contact_Phone.value.trim(),
+          Contact_Email: form.Contact_Email.value.trim(),
+          Address: form.Address.value.trim(),
+          Remark: form.Remark.value.trim()
+        };
+        if (isEdit && form.Vendor_Status) payload.Vendor_Status = form.Vendor_Status.value;
+
+        var call = isEdit
+          ? App.api('api_updateVendor', v.Vendor_ID, payload, v.Version, form.reason.value.trim())
+          : App.api('api_createVendor', payload);
+
+        call.then(function (result) {
+          close();
+          App.toast('บันทึกผู้ขายแล้ว', 'ok');
+          App.showWarnings(result.warnings);
+          load(host);
+        }).catch(function (error) {
+          // A duplicate Tax_ID comes back with the vendor already on file (SPEC §6.2).
+          if (error.code === 'DUPLICATE' && error.details && error.details.existing) {
+            App.toast(error.message + ' (รหัส ' + error.details.existing.Vendor_ID + ')', 'bad');
+            return;
+          }
+          App.showError(error);
+        });
+      }
+    });
+  }
+
+  App.registerView({ id: 'vendors', label: 'ผู้ขาย', render: render });
+})();
+</script>

@@ -1,0 +1,195 @@
+<script>
+/**
+ * CaseDetail — the Case page and its tabs.
+ *
+ * The page itself knows nothing about the individual tabs: it renders whatever
+ * has been handed to App.registerCaseTab. A future module (Benchmark, ต่อรองราคา,
+ * ตรวจคุณสมบัติ) adds its tab from its own file and nothing here changes (SPEC §10.5).
+ */
+(function () {
+
+  var current = { caseId: null, bundle: null, tab: null };
+
+  function render(host, caseId) {
+    if (!caseId) {
+      host.innerHTML = '<div class="alert error">ไม่ได้ระบุรหัสงาน</div>';
+      return;
+    }
+    current.caseId = caseId;
+    reload(host);
+  }
+
+  function reload(host) {
+    host.innerHTML = '<div class="loading"><span class="spinner"></span> กำลังโหลดงาน…</div>';
+    App.api('api_getCase', current.caseId).then(function (bundle) {
+      current.bundle = bundle;
+      paint(host);
+    }).catch(function (error) {
+      host.innerHTML = '<div class="alert error"><strong>เปิดงานนี้ไม่ได้</strong><br>' +
+        App.esc(error.message) + '</div>';
+    });
+  }
+
+  /** Tabs and actions re-read the Case, so every screen shows the same truth. */
+  function refresh() {
+    reload(document.getElementById('app'));
+  }
+
+  function paint(host) {
+    var ctx = context();
+    var tabs = App.getCaseTabs(ctx);
+    if (!current.tab || !tabs.some(function (t) { return t.id === current.tab; })) {
+      current.tab = tabs.length ? tabs[0].id : null;
+    }
+
+    host.innerHTML =
+      header(ctx) +
+      ruleBanner(ctx) +
+      '<div class="card">' +
+        '<div class="tabs" role="tablist">' + tabs.map(function (t) {
+          return '<button type="button" role="tab" data-tab="' + App.esc(t.id) + '" aria-selected="' +
+            (t.id === current.tab) + '">' + App.esc(t.label) + '</button>';
+        }).join('') + '</div>' +
+        '<div class="card-body" id="tabBody"></div>' +
+      '</div>';
+
+    host.querySelectorAll('[data-tab]').forEach(function (b) {
+      b.onclick = function () { current.tab = b.dataset.tab; paint(host); };
+    });
+    host.querySelector('#backBtn').onclick = function () { App.go('cases'); };
+    bindHeaderActions(host, ctx);
+
+    var body = host.querySelector('#tabBody');
+    var tab = tabs.filter(function (t) { return t.id === current.tab; })[0];
+    if (tab) tab.render(body, ctx);
+  }
+
+  /** What every tab receives. `refresh` is how a tab asks the page to reload. */
+  function context() {
+    return {
+      caseId: current.caseId,
+      bundle: current.bundle,
+      caseRecord: current.bundle.caseRecord,
+      activities: current.bundle.activities,
+      vendorNames: current.bundle.vendorNames || {},
+      rules: current.bundle.rules,
+      permissions: current.bundle.permissions,
+      canEdit: current.bundle.permissions.canEdit,
+      refresh: refresh
+    };
+  }
+
+  function header(ctx) {
+    var c = ctx.caseRecord;
+    return '<div class="page-title">' +
+      '<button type="button" id="backBtn">← กลับ</button>' +
+      '<h2>' + App.esc(c.Case_ID) + '</h2>' +
+      '<span class="badge ' + App.statusBadgeClass(c.Status) + '">' +
+        App.esc(App.statusLabel(c.Status)) + '</span>' +
+      (c.PR_No ? '<span class="badge ok">PR ' + App.esc(c.PR_No) + '</span>' : '') +
+      (ctx.canEdit ? '' : '<span class="badge">อ่านอย่างเดียว</span>') +
+      '<span class="spacer"></span>' +
+      '<span class="faint">เจ้าของงาน: ' + App.esc(c.Buyer_Owner) + '</span>' +
+      (ctx.bundle.driveFolderUrl
+        ? ' <a class="btn" href="' + App.esc(ctx.bundle.driveFolderUrl) + '" target="_blank" rel="noopener">โฟลเดอร์ไฟล์</a>'
+        : '') +
+      '<span id="headerActions"></span>' +
+      '</div>';
+  }
+
+  /**
+   * What is still missing before this Case can be closed (SPEC §8.2).
+   * Filled by the rules engine; before it is loaded the banner is simply empty.
+   */
+  function ruleBanner(ctx) {
+    // Only worth saying while the Case is still open: on a closed or cancelled
+    // one the same list would read as a problem when it is simply history.
+    if (!ctx.rules || ctx.rules.ok || ctx.caseRecord.Status !== 'OPEN') return '';
+    return App.alertHtml('warn', 'ยังปิดงานไม่ได้', ctx.rules.blockers);
+  }
+
+  /** Header buttons (close, status change, reassign, reopen) are contributed
+   *  by the files that own those operations. */
+  var headerActions = [];
+  function registerHeaderAction(action) { headerActions.push(action); }
+
+  function bindHeaderActions(host, ctx) {
+    var slot = host.querySelector('#headerActions');
+    var usable = headerActions.filter(function (a) { return !a.visible || a.visible(ctx); });
+    slot.innerHTML = usable.map(function (a, i) {
+      return ' <button type="button" class="' + App.esc(a.className || '') + '" data-action="' + i + '">' +
+        App.esc(typeof a.label === 'function' ? a.label(ctx) : a.label) + '</button>';
+    }).join('');
+    slot.querySelectorAll('[data-action]').forEach(function (b) {
+      b.onclick = function () { usable[Number(b.dataset.action)].run(ctx); };
+    });
+  }
+
+  App.registerView({ id: 'case', label: 'รายละเอียดงาน', hidden: true, render: render });
+  App.registerCaseHeaderAction = registerHeaderAction;
+})();
+
+/* ------------------------------------------------------ tab: ข้อมูลงาน (SPEC §8.2) */
+(function () {
+  App.registerCaseTab({
+    id: 'info',
+    label: 'ข้อมูลงาน',
+    order: 10,
+    render: function (host, ctx) {
+      var c = ctx.caseRecord;
+      host.innerHTML =
+        '<div class="btn-row" style="margin-bottom:14px">' +
+          (ctx.canEdit ? '<button type="button" class="primary" id="editCaseBtn">แก้ไขข้อมูลงาน</button>' : '') +
+        '</div>' +
+        '<dl class="kv">' +
+          row('วันที่รับเรื่อง', App.fmtDate(c.Request_Date)) +
+          row('เอกสารอ้างอิง', c.Request_Ref) +
+          row('ผู้ขอ', c.Requester_Name + (c.Requester_Email ? ' (' + c.Requester_Email + ')' : '')) +
+          row('หน่วยงาน', App.labelOf('DEPARTMENT', c.Department_Code)) +
+          row('วิธีจัดซื้อ', App.labelOf('METHOD', c.Method)) +
+          row('ประเภทงบ', App.labelOf('BUDGET_TYPE', c.Budget_Type) + ' / ' + App.labelOf('SUB_TYPE', c.Sub_Type)) +
+          row('รายละเอียดงาน', c.Description) +
+          row('วันที่ต้องการ', App.fmtDate(c.Required_Date)) +
+          row('ข้อมูลจากผู้ขอ', c.Intake_Complete ? 'ครบถ้วน' : 'ยังไม่ครบ') +
+          (c.Intake_Note ? row('สิ่งที่ยังขาด', c.Intake_Note) : '') +
+          row('เจ้าของงาน', c.Buyer_Owner) +
+          row('เปิดงานเมื่อ', App.fmtDateTime(c.Created_At) + ' โดย ' + c.Created_By) +
+          row('แก้ไขล่าสุด', App.fmtDateTime(c.Updated_At) + ' โดย ' + c.Updated_By +
+            ' (เวอร์ชัน ' + c.Version + ')') +
+          row('เลข PR (EPICOR)', c.PR_No ? c.PR_No + (c.PR_Date ? ' · ' + App.fmtDate(c.PR_Date) : '') : '—') +
+          row('บริษัทที่จัดซื้อ', c.Company_Code ? App.labelOf('COMPANY', c.Company_Code) : '—') +
+          (c.Closed_At ? row('ปิดงานเมื่อ', App.fmtDateTime(c.Closed_At)) : '') +
+        '</dl>';
+
+      var edit = host.querySelector('#editCaseBtn');
+      if (edit) edit.onclick = function () { openEdit(ctx); };
+    }
+  });
+
+  function row(label, value) {
+    return '<dt>' + App.esc(label) + '</dt><dd>' + App.esc(value === null || value === undefined ? '' : value) + '</dd>';
+  }
+
+  function openEdit(ctx) {
+    var c = ctx.caseRecord;
+    App.modal({
+      title: 'แก้ไขข้อมูลงาน ' + c.Case_ID,
+      submitLabel: 'บันทึก',
+      wide: true,
+      body: App.caseForm.html(c) +
+        '<div class="field"><label>เหตุผล (ไม่บังคับ สำหรับการแก้ไขทั่วไป)</label>' +
+        '<input type="text" name="reason" maxlength="500"></div>',
+      onOpen: function (form) { App.caseForm.wire(form); },
+      onSubmit: function (form, close) {
+        App.api('api_updateCase', c.Case_ID, App.caseForm.read(form), c.Version, form.reason.value.trim())
+          .then(function (result) {
+            close();
+            App.toast('บันทึกแล้ว', 'ok');
+            App.showWarnings(result.warnings);
+            ctx.refresh();
+          }).catch(App.showError);
+      }
+    });
+  }
+})();
+</script>

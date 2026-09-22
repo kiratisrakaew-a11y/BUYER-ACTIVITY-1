@@ -1,0 +1,91 @@
+<script>
+/**
+ * Case Detail tab: ประวัติการแก้ไข (SPEC §8.2).
+ *
+ * The Change_Log read back verbatim. Nothing here writes, because nothing may:
+ * the log is append-only and has no update or delete path at all.
+ */
+(function () {
+
+  App.registerCaseTab({
+    id: 'history',
+    label: 'ประวัติการแก้ไข',
+    order: 50,
+    render: function (host, ctx) {
+      host.innerHTML = '<div class="loading"><span class="spinner"></span> กำลังโหลดประวัติ…</div>';
+      App.api('api_getChangeLog', ctx.caseId).then(function (data) {
+        host.innerHTML = filters() + '<div id="logBody"></div>';
+        var select = host.querySelector('#logAction');
+        var body = host.querySelector('#logBody');
+
+        function paint() {
+          var chosen = select.value;
+          var rows = chosen ? data.entries.filter(function (e) { return e.Action === chosen; }) : data.entries;
+          body.innerHTML = table(rows);
+        }
+        select.onchange = paint;
+        paint();
+      }).catch(function (error) {
+        host.innerHTML = '<div class="alert error">' + App.esc(error.message) + '</div>';
+      });
+    }
+  });
+
+  var ACTION_LABELS = {
+    CREATE: 'สร้างข้อมูล',
+    UPDATE: 'แก้ไขข้อมูล',
+    DELETE: 'ลบข้อมูล',
+    RESTORE: 'กู้คืนข้อมูล',
+    STATUS_CHANGE: 'เปลี่ยนสถานะ',
+    REASSIGN: 'โอนงาน',
+    REOPEN: 'เปิดงานใหม่',
+    EXCEPTION: 'คำขอยกเว้น'
+  };
+
+  function filters() {
+    var options = Object.keys(ACTION_LABELS).map(function (code) {
+      return '<option value="' + App.esc(code) + '">' + App.esc(ACTION_LABELS[code]) + '</option>';
+    }).join('');
+    return '<div class="filters" style="margin-bottom:14px">' +
+      '<div class="field"><label for="logAction">ประเภทการเปลี่ยนแปลง</label>' +
+      '<select id="logAction"><option value="">ทั้งหมด</option>' + options + '</select></div>' +
+      '<span class="faint">บันทึกการแก้ไขเป็นข้อมูลแบบเพิ่มได้อย่างเดียว ไม่มีใครลบหรือแก้ไขได้</span>' +
+      '</div>';
+  }
+
+  function table(entries) {
+    if (!entries.length) return '<div class="empty">ไม่มีรายการในประเภทที่เลือก</div>';
+    var rows = entries.map(function (e) {
+      return '<tr>' +
+        '<td class="nowrap">' + App.esc(App.fmtDateTime(e.Timestamp)) + '</td>' +
+        '<td class="nowrap">' + App.esc(e.User) + '</td>' +
+        '<td class="nowrap"><span class="badge ' + actionClass(e.Action) + '">' +
+          App.esc(ACTION_LABELS[e.Action] || e.Action) + '</span></td>' +
+        '<td class="nowrap">' + App.esc(e.Table_Name) +
+          '<div class="faint">' + App.esc(e.Record_ID) + '</div></td>' +
+        '<td>' + App.esc(e.Field || '') + '</td>' +
+        '<td>' + valueChange(e) + '</td>' +
+        '<td>' + App.esc(e.Reason || '') + '</td>' +
+        '</tr>';
+    }).join('');
+
+    return '<div class="table-wrap"><table><thead><tr>' +
+      '<th>เวลา</th><th>ผู้ทำรายการ</th><th>ประเภท</th><th>ตาราง / รหัส</th>' +
+      '<th>ฟิลด์</th><th>ค่าเดิม → ค่าใหม่</th><th>เหตุผล</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function actionClass(action) {
+    if (action === 'DELETE') return 'bad';
+    if (action === 'CREATE' || action === 'RESTORE') return 'ok';
+    if (action === 'EXCEPTION' || action === 'REOPEN') return 'warn';
+    return 'info';
+  }
+
+  function valueChange(e) {
+    if (e.Action === 'CREATE') return '<span class="faint">' + App.esc(e.New_Value) + '</span>';
+    if (!e.Old_Value && !e.New_Value) return '';
+    return App.esc(e.Old_Value || '(ว่าง)') + ' → <strong>' + App.esc(e.New_Value || '(ว่าง)') + '</strong>';
+  }
+})();
+</script>

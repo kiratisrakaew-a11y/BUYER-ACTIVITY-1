@@ -1,0 +1,188 @@
+<script>
+/**
+ * Case Detail tab: Activity (SPEC §8.2).
+ *
+ * A timeline ordered by when the work happened, with the form to record the next
+ * entry. Performed_By is shown but never editable: the server always writes the
+ * person who pressed save.
+ */
+(function () {
+
+  App.registerCaseTab({
+    id: 'activity',
+    label: 'Activity',
+    order: 40,
+    render: render
+  });
+
+  function render(host, ctx) {
+    var canLog = ctx.permissions.canLogActivity;
+    host.innerHTML =
+      '<div class="btn-row" style="margin-bottom:16px">' +
+        (canLog ? '<button type="button" class="primary" id="addActivityBtn">+ บันทึกกิจกรรม</button>' : '') +
+        '<span class="faint">บันทึกในชื่อ ' + App.esc(App.state.user.email) + '</span>' +
+      '</div>' +
+      (ctx.activities.length ? timeline(ctx) : '<div class="empty">ยังไม่มีการบันทึกกิจกรรมในงานนี้</div>');
+
+    var add = host.querySelector('#addActivityBtn');
+    if (add) add.onclick = function () { openForm(ctx, null); };
+
+    host.querySelectorAll('[data-editact]').forEach(function (b) {
+      b.onclick = function () { openForm(ctx, findActivity(ctx, b.dataset.editact)); };
+    });
+    host.querySelectorAll('[data-delact]').forEach(function (b) {
+      b.onclick = function () { removeActivity(ctx, findActivity(ctx, b.dataset.delact)); };
+    });
+    host.querySelectorAll('[data-done]').forEach(function (box) {
+      box.onchange = function () {
+        var activity = findActivity(ctx, box.dataset.done);
+        App.api('api_setNextActionDone', activity.Activity_ID, box.checked, activity.Version)
+          .then(function () {
+            App.toast(box.checked ? 'ทำเครื่องหมายว่าเสร็จแล้ว' : 'ยกเลิกเครื่องหมายเสร็จแล้ว', 'ok');
+            ctx.refresh();
+          }).catch(function (error) {
+            box.checked = !box.checked;
+            App.showError(error);
+          });
+      };
+    });
+  }
+
+  function findActivity(ctx, id) {
+    return ctx.activities.filter(function (a) { return a.Activity_ID === id; })[0];
+  }
+
+  function timeline(ctx) {
+    var vendorNames = ctx.vendorNames;
+
+    return '<ul class="timeline">' + ctx.activities.map(function (a) {
+      var mine = a.Performed_By === App.state.user.email;
+      var canTouch = ctx.canEdit || (mine && ctx.permissions.canLogActivity);
+      return '<li>' +
+        '<div class="when">' + App.esc(App.fmtDateTime(a.Activity_Date)) +
+          ' · <span class="badge info">' + App.esc(App.labelOf('ACTIVITY_TYPE', a.Activity_Type)) + '</span>' +
+          (a.Channel ? ' <span class="badge">' + App.esc(App.labelOf('CHANNEL', a.Channel)) + '</span>' : '') +
+          (a.Vendor_ID ? ' <span class="badge">' + App.esc(vendorNames[a.Vendor_ID] || a.Vendor_ID) + '</span>' : '') +
+        '</div>' +
+        '<div class="what">' + App.esc(a.Activity_Description) + '</div>' +
+        (a.Next_Action ? nextActionBlock(a, canTouch) : '') +
+        (a.Attachment_URL
+          ? '<div><a href="' + App.esc(a.Attachment_URL) + '" target="_blank" rel="noopener">ไฟล์แนบ</a></div>'
+          : '') +
+        '<div class="who">บันทึกโดย ' + App.esc(a.Performed_By) +
+          ' · บันทึกเมื่อ ' + App.esc(App.fmtDateTime(a.Created_At)) +
+          (canTouch
+            ? ' · <button type="button" class="link-btn" data-editact="' + App.esc(a.Activity_ID) + '">แก้ไข</button>' +
+              ' · <button type="button" class="link-btn" data-delact="' + App.esc(a.Activity_ID) + '">ลบ</button>'
+            : '') +
+        '</div>' +
+        '</li>';
+    }).join('') + '</ul>';
+  }
+
+  function nextActionBlock(a, canTouch) {
+    var overdue = !a.Next_Action_Done && a.Next_Action_Date &&
+      new Date(a.Next_Action_Date) < new Date(new Date().toDateString());
+    return '<div class="alert ' + (overdue ? 'warn' : 'info') + '" style="margin:8px 0">' +
+      '<label class="field-inline" style="margin:0">' +
+        '<input type="checkbox" data-done="' + App.esc(a.Activity_ID) + '"' +
+          (a.Next_Action_Done ? ' checked' : '') + (canTouch ? '' : ' disabled') + '>' +
+        '<span>สิ่งที่ต้องทำต่อ: ' + App.esc(a.Next_Action) +
+          ' (ภายใน ' + App.esc(App.fmtDate(a.Next_Action_Date)) + ')' +
+          (overdue ? ' — เลยกำหนดแล้ว' : '') + '</span>' +
+      '</label></div>';
+  }
+
+  function openForm(ctx, activity) {
+    var a = activity || {};
+    // The register is fetched when the dialog opens rather than shipped with the
+    // Case: most activities name no vendor at all, and the list is the same one
+    // the Vendors screen shows.
+    var vendorOptions = '<option value="">— ไม่เจาะจงผู้ขาย —</option>' +
+      (a.Vendor_ID ? '<option value="' + App.esc(a.Vendor_ID) + '" selected>' +
+        App.esc(ctx.vendorNames[a.Vendor_ID] || a.Vendor_ID) + '</option>' : '');
+
+    App.modal({
+      title: activity ? 'แก้ไขกิจกรรม' : 'บันทึกกิจกรรม',
+      submitLabel: 'บันทึก',
+      wide: true,
+      body: '<div class="grid two">' +
+        App.caseForm.field('Activity_Date', 'วันและเวลาที่ทำจริง',
+          '<input type="datetime-local" name="Activity_Date" required value="' +
+          App.esc(toLocalInput(a.Activity_Date)) + '">', true) +
+        App.caseForm.field('Activity_Type', 'ประเภทกิจกรรม',
+          '<select name="Activity_Type" required>' +
+          App.optionsFor('ACTIVITY_TYPE', a.Activity_Type, 'M1') + '</select>', true) +
+        App.caseForm.field('Channel', 'ช่องทาง',
+          '<select name="Channel">' + App.optionsFor('CHANNEL', a.Channel) + '</select>') +
+        App.caseForm.field('Vendor_ID', 'เกี่ยวกับผู้ขาย',
+          '<select name="Vendor_ID">' + vendorOptions + '</select>') +
+        '<div class="field span-all"><label>รายละเอียดกิจกรรม <span class="req">*</span></label>' +
+          '<textarea name="Activity_Description" required maxlength="2000">' +
+          App.esc(a.Activity_Description || '') + '</textarea></div>' +
+        App.caseForm.field('Next_Action', 'สิ่งที่ต้องทำต่อ',
+          '<input type="text" name="Next_Action" maxlength="1000" value="' + App.esc(a.Next_Action || '') + '">') +
+        App.caseForm.field('Next_Action_Date', 'ภายในวันที่ (บังคับถ้ามีสิ่งที่ต้องทำต่อ)',
+          '<input type="date" name="Next_Action_Date" value="' +
+          App.esc(App.toInputDate(a.Next_Action_Date)) + '">') +
+        App.caseForm.field('Attachment_URL', 'ลิงก์ไฟล์แนบ (ถ้ามี)',
+          '<input type="url" name="Attachment_URL" value="' + App.esc(a.Attachment_URL || '') + '">') +
+        '</div>',
+      onSubmit: function (form, close) {
+        var payload = {
+          Activity_Date: form.Activity_Date.value ? new Date(form.Activity_Date.value).toISOString() : '',
+          Activity_Type: form.Activity_Type.value,
+          Channel: form.Channel.value,
+          Vendor_ID: form.Vendor_ID.value,
+          Activity_Description: form.Activity_Description.value.trim(),
+          Next_Action: form.Next_Action.value.trim(),
+          Next_Action_Date: form.Next_Action_Date.value,
+          Attachment_URL: form.Attachment_URL.value.trim()
+        };
+        if (activity) payload.Activity_ID = activity.Activity_ID;
+
+        App.api('api_saveActivity', ctx.caseId, payload, activity ? activity.Version : null)
+          .then(function () {
+            close();
+            App.toast('บันทึกกิจกรรมแล้ว', 'ok');
+            ctx.refresh();
+          }).catch(App.showError);
+      },
+      onOpen: function (form) { fillVendorOptions(form, a.Vendor_ID); }
+    });
+  }
+
+  /** Loads the vendor register into the picker without holding up the dialog. */
+  function fillVendorOptions(form, selected) {
+    App.api('api_searchVendors', '').then(function (data) {
+      form.Vendor_ID.innerHTML = '<option value="">— ไม่เจาะจงผู้ขาย —</option>' +
+        data.vendors.map(function (v) {
+          return '<option value="' + App.esc(v.Vendor_ID) + '"' +
+            (v.Vendor_ID === selected ? ' selected' : '') + '>' + App.esc(v.Vendor_Name) + '</option>';
+        }).join('');
+    }).catch(function () {
+      // The picker is optional; an activity records fine without a vendor on it.
+    });
+  }
+
+  /** <input type="datetime-local"> wants local wall-clock time, not an ISO string. */
+  function toLocalInput(iso) {
+    var d = iso ? new Date(iso) : new Date();
+    if (isNaN(d.getTime())) d = new Date();
+    var pad = function (n) { return n < 10 ? '0' + n : String(n); };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+      'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  function removeActivity(ctx, activity) {
+    App.askReason('ลบกิจกรรม', 'กิจกรรมจะถูกซ่อนจาก timeline แต่ยังคงอยู่ในประวัติการแก้ไข')
+      .then(function (reason) {
+        App.api('api_deleteRecord', 'Activities', activity.Activity_ID, activity.Version, reason)
+          .then(function () {
+            App.toast('ลบกิจกรรมแล้ว', 'ok');
+            ctx.refresh();
+          }).catch(App.showError);
+      });
+  }
+})();
+</script>

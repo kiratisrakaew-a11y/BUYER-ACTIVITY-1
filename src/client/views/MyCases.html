@@ -1,0 +1,240 @@
+<script>
+/**
+ * MyCases — the landing page: the Cases this buyer owns, what is overdue, and
+ * which of them already carry the PR number that closes them (SPEC §8.1).
+ */
+(function () {
+
+  var filters = { scope: 'mine', status: '', budgetType: '', from: '', to: '', q: '' };
+
+  function render(host) {
+    host.innerHTML = shell();
+    bindFilters(host);
+    // The button only exists for roles that may open a Case, so an ADMIN or an
+    // AUDITOR lands here with nothing to bind. Reaching through the null is what
+    // took the whole page down for the very first person to install the system,
+    // since setup() makes whoever runs it an ADMIN.
+    var newCase = host.querySelector('#newCaseBtn');
+    if (newCase) newCase.onclick = openNewCaseDialog;
+    load(host);
+  }
+
+  function shell() {
+    var canCreate = App.state.permissions.canCreateCase;
+    return '' +
+      '<div class="page-title">' +
+        '<h2>งานของฉัน</h2>' +
+        '<span class="spacer"></span>' +
+        (canCreate ? '<button type="button" class="primary" id="newCaseBtn">+ เปิด Case ใหม่</button>' : '') +
+      '</div>' +
+      '<div class="card"><div class="card-body">' +
+        '<div class="filters">' +
+          '<div class="field"><label for="fScope">ขอบเขต</label>' +
+            '<select id="fScope">' +
+              '<option value="mine">เฉพาะงานของฉัน</option>' +
+              '<option value="all">ทุกงานที่ดูได้</option>' +
+            '</select></div>' +
+          '<div class="field"><label for="fStatus">สถานะ</label><select id="fStatus">' +
+            '<option value="">ทั้งหมด</option>' + statusOptions() + '</select></div>' +
+          '<div class="field"><label for="fBudget">ประเภทงบ</label><select id="fBudget">' +
+            '<option value="">ทั้งหมด</option>' + App.optionsFor('BUDGET_TYPE', '', null, false) + '</select></div>' +
+          '<div class="field"><label for="fFrom">วันที่รับเรื่อง ตั้งแต่</label><input type="date" id="fFrom"></div>' +
+          '<div class="field"><label for="fTo">ถึง</label><input type="date" id="fTo"></div>' +
+          '<div class="field" style="min-width:220px"><label for="fQ">ค้นหา</label>' +
+            '<input type="search" id="fQ" placeholder="รหัสงาน / รายละเอียด / ผู้ขอ"></div>' +
+          '<button type="button" id="applyBtn" class="primary">กรอง</button>' +
+          '<button type="button" id="resetBtn">ล้าง</button>' +
+        '</div>' +
+      '</div></div>' +
+      '<div class="card"><div class="card-body tight" id="caseList"></div></div>';
+  }
+
+  function statusOptions() {
+    return App.state.statuses.map(function (s) {
+      return '<option value="' + App.esc(s.code) + '">' + App.esc(s.label) + '</option>';
+    }).join('');
+  }
+
+  function bindFilters(host) {
+    host.querySelector('#fScope').value = filters.scope;
+    host.querySelector('#fStatus').value = filters.status;
+    host.querySelector('#fBudget').value = filters.budgetType;
+    host.querySelector('#fFrom').value = filters.from;
+    host.querySelector('#fTo').value = filters.to;
+    host.querySelector('#fQ').value = filters.q;
+
+    host.querySelector('#applyBtn').onclick = function () {
+      filters.scope = host.querySelector('#fScope').value;
+      filters.status = host.querySelector('#fStatus').value;
+      filters.budgetType = host.querySelector('#fBudget').value;
+      filters.from = host.querySelector('#fFrom').value;
+      filters.to = host.querySelector('#fTo').value;
+      filters.q = host.querySelector('#fQ').value;
+      load(host);
+    };
+    host.querySelector('#resetBtn').onclick = function () {
+      filters = { scope: 'mine', status: '', budgetType: '', from: '', to: '', q: '' };
+      render(host);
+    };
+    host.querySelector('#fQ').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') host.querySelector('#applyBtn').click();
+    });
+  }
+
+  function load(host) {
+    var list = host.querySelector('#caseList');
+    list.innerHTML = '<div class="loading"><span class="spinner"></span> กำลังโหลดรายการงาน…</div>';
+    App.api('api_listCases', filters).then(function (data) {
+      list.innerHTML = table(data);
+      list.querySelectorAll('[data-case]').forEach(function (el) {
+        el.onclick = function () { App.go('case/' + encodeURIComponent(el.dataset.case)); };
+      });
+    }).catch(function (error) {
+      list.innerHTML = '<div class="alert error">' + App.esc(error.message) + '</div>';
+    });
+  }
+
+  function table(data) {
+    if (!data.cases.length) {
+      return '<div class="empty">ยังไม่มีงานที่ตรงกับเงื่อนไข</div>';
+    }
+    var rows = data.cases.map(function (c) {
+      var overdue = c.nextAction && c.nextAction.overdue;
+      return '<tr class="' + (overdue ? 'overdue' : '') + '">' +
+        '<td class="nowrap"><button type="button" class="link-btn" data-case="' + App.esc(c.Case_ID) + '">' +
+          App.esc(c.Case_ID) + '</button></td>' +
+        '<td>' + App.esc(c.Description) + '<div class="faint">' + App.esc(c.Request_Ref) + ' · ' +
+          App.esc(c.Requester_Name) + '</div></td>' +
+        '<td class="nowrap">' + App.esc(App.labelOf('BUDGET_TYPE', c.Budget_Type)) +
+          '<div class="faint">' + App.esc(App.labelOf('SUB_TYPE', c.Sub_Type)) + '</div></td>' +
+        '<td class="nowrap"><span class="badge ' + App.statusBadgeClass(c.Status) + '">' +
+          App.esc(App.statusLabel(c.Status)) + '</span></td>' +
+        '<td class="nowrap">' + prCell(c) + '</td>' +
+        '<td>' + nextActionCell(c.nextAction) + '</td>' +
+        '<td class="nowrap">' + App.esc(App.fmtDate(c.Request_Date)) + '</td>' +
+        '</tr>';
+    }).join('');
+
+    var note = data.truncated
+      ? '<div class="alert info">แสดง ' + data.cases.length + ' รายการแรกจากทั้งหมด ' + data.total +
+        ' รายการ กรุณาใช้ตัวกรองเพื่อให้ผลลัพธ์แคบลง</div>'
+      : '';
+
+    return note + '<div class="table-wrap"><table><thead><tr>' +
+      '<th>รหัสงาน</th><th>รายละเอียด</th><th>ประเภทงบ</th><th>สถานะ</th>' +
+      '<th>เลข PR / บริษัท</th><th>สิ่งที่ต้องทำต่อ</th><th>วันที่รับเรื่อง</th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  /**
+   * The PR number once there is one, and until then what is still missing
+   * before this Case can be closed — the same verdict the Case page shows.
+   */
+  function prCell(c) {
+    if (c.PR_No) {
+      return '<span class="badge ok">' + App.esc(c.PR_No) + '</span>' +
+        '<div class="faint">' + App.esc(App.labelOf('COMPANY', c.Company_Code)) + '</div>';
+    }
+    var ready = c.readiness;
+    if (!ready || ready.blockers.length === 0) return '<span class="faint">—</span>';
+    return '<span class="badge warn" title="' + App.esc(ready.blockers.join(' · ')) + '">ยังไม่มีเลข PR</span>';
+  }
+
+  function nextActionCell(next) {
+    if (!next) return '<span class="faint">—</span>';
+    var when = next.date ? App.fmtDate(next.date) : 'ไม่ระบุวันที่';
+    return App.esc(next.text) + '<div class="faint">' +
+      (next.overdue ? '<span class="badge bad">เลยกำหนด</span> ' : '') + App.esc(when) + '</div>';
+  }
+
+  /* ------------------------------------------------------------ new Case form */
+
+  function openNewCaseDialog() {
+    var dialog = App.modal({
+      title: 'เปิด Case ใหม่',
+      submitLabel: 'สร้างงาน',
+      wide: true,
+      body: caseFormHtml({}),
+      onOpen: function (form) { wireBudgetType(form); },
+      onSubmit: function (form, close) {
+        var payload = readCaseForm(form);
+        App.api('api_createCase', payload).then(function (result) {
+          close();
+          App.toast('สร้างงาน ' + result.caseRecord.Case_ID + ' แล้ว', 'ok');
+          App.showWarnings(result.warnings);
+          App.go('case/' + encodeURIComponent(result.caseRecord.Case_ID));
+        }).catch(App.showError);
+      }
+    });
+    return dialog;
+  }
+
+  /** Shared by the create dialog and the "ข้อมูลงาน" tab so the two never drift. */
+  function caseFormHtml(c) {
+    return '<div class="grid two">' +
+      field('Request_Date', 'วันที่รับเรื่อง', '<input type="date" name="Request_Date" required value="' +
+        App.esc(App.toInputDate(c.Request_Date)) + '">', true) +
+      field('Request_Ref', 'เอกสารอ้างอิง (หัวข้ออีเมล / เลข memo)',
+        '<input type="text" name="Request_Ref" required maxlength="200" value="' + App.esc(c.Request_Ref || '') + '">', true) +
+      field('Requester_Name', 'ชื่อผู้ขอ',
+        '<input type="text" name="Requester_Name" required maxlength="150" value="' + App.esc(c.Requester_Name || '') + '">', true) +
+      field('Requester_Email', 'อีเมลผู้ขอ',
+        '<input type="email" name="Requester_Email" maxlength="150" value="' + App.esc(c.Requester_Email || '') + '">') +
+      field('Department_Code', 'หน่วยงานที่ขอ',
+        '<select name="Department_Code" required>' + App.optionsFor('DEPARTMENT', c.Department_Code) + '</select>', true) +
+      field('Method', 'วิธีจัดซื้อ',
+        '<select name="Method" required>' + App.optionsFor('METHOD', c.Method || 'NORMAL') + '</select>', true) +
+      field('Budget_Type', 'ประเภทงบ',
+        '<select name="Budget_Type" required>' + App.optionsFor('BUDGET_TYPE', c.Budget_Type) + '</select>', true) +
+      field('Sub_Type', 'ประเภทย่อย',
+        '<select name="Sub_Type" required>' + App.optionsFor('SUB_TYPE', c.Sub_Type, c.Budget_Type || '\u0000') + '</select>', true) +
+      field('Required_Date', 'วันที่หน่วยงานต้องการ',
+        '<input type="date" name="Required_Date" value="' + App.esc(App.toInputDate(c.Required_Date)) + '">') +
+      '<div class="field span-all"><label>รายละเอียดงาน <span class="req">*</span></label>' +
+        '<textarea name="Description" required maxlength="2000">' + App.esc(c.Description || '') + '</textarea></div>' +
+      '<div class="field span-all field-inline">' +
+        '<input type="checkbox" id="Intake_Complete" name="Intake_Complete"' +
+          (c.Intake_Complete ? ' checked' : '') + '>' +
+        '<label for="Intake_Complete">ข้อมูลจากผู้ขอครบถ้วนแล้ว</label></div>' +
+      '<div class="field span-all"><label>สิ่งที่ยังขาด (ถ้ามี)</label>' +
+        '<textarea name="Intake_Note" maxlength="2000">' + App.esc(c.Intake_Note || '') + '</textarea></div>' +
+      '</div>';
+  }
+
+  function field(name, label, control, required) {
+    return '<div class="field"><label for="' + App.esc(name) + '">' + App.esc(label) +
+      (required ? ' <span class="req">*</span>' : '') + '</label>' + control + '</div>';
+  }
+
+  /** Sub_Type depends on Budget_Type (Config_Lists.Parent_Code), so it reloads on change. */
+  function wireBudgetType(form) {
+    var budget = form.Budget_Type;
+    var sub = form.Sub_Type;
+    budget.addEventListener('change', function () {
+      sub.innerHTML = App.optionsFor('SUB_TYPE', '', budget.value || '\u0000');
+    });
+  }
+
+  function readCaseForm(form) {
+    return {
+      Request_Date: form.Request_Date.value,
+      Request_Ref: form.Request_Ref.value.trim(),
+      Requester_Name: form.Requester_Name.value.trim(),
+      Requester_Email: form.Requester_Email.value.trim(),
+      Department_Code: form.Department_Code.value,
+      Method: form.Method.value,
+      Budget_Type: form.Budget_Type.value,
+      Sub_Type: form.Sub_Type.value,
+      Description: form.Description.value.trim(),
+      Required_Date: form.Required_Date.value,
+      Intake_Complete: form.Intake_Complete.checked,
+      Intake_Note: form.Intake_Note.value.trim()
+    };
+  }
+
+  App.registerView({ id: 'cases', label: 'งานของฉัน', render: render });
+
+  // Shared with the Case Detail "ข้อมูลงาน" tab.
+  App.caseForm = { html: caseFormHtml, read: readCaseForm, wire: wireBudgetType, field: field };
+})();
+</script>

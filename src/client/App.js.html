@@ -1,0 +1,402 @@
+<script>
+/**
+ * App.js — router, shared state and the google.script.run wrapper.
+ *
+ * Two rules the views rely on:
+ *   1. Every value that comes from the server is rendered through esc(); nothing
+ *      is ever interpolated raw into innerHTML (SPEC §11, XSS).
+ *   2. Views and Case Detail tabs register themselves, so a future module adds a
+ *      tab without editing this file or any existing view (SPEC §10.5).
+ */
+var App = (function () {
+
+  var state = {
+    user: null,
+    permissions: {},
+    lists: {},
+    statuses: [],
+    settings: {},
+    buyers: [],
+    route: { name: 'cases', param: null },
+    ready: false
+  };
+
+  var views = {};
+  var viewOrder = [];
+  var caseTabs = [];
+  var pending = 0;
+
+  /* ------------------------------------------------------------ server calls */
+
+  function api(name) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    setBusy(1);
+    return new Promise(function (resolve, reject) {
+      google.script.run
+        .withSuccessHandler(function (response) {
+          setBusy(-1);
+          if (!response) return reject({ code: 'INTERNAL', message: 'เซิร์ฟเวอร์ไม่ได้ตอบกลับ' });
+          if (response.ok) return resolve(response.data);
+          reject(response.error || { code: 'INTERNAL', message: 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ' });
+        })
+        .withFailureHandler(function (err) {
+          setBusy(-1);
+          reject({ code: 'INTERNAL', message: (err && err.message) || 'เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ' });
+        })[name].apply(null, args);
+    });
+  }
+
+  function setBusy(delta) {
+    pending = Math.max(0, pending + delta);
+    var bar = document.getElementById('busyBar');
+    if (bar) bar.style.display = pending > 0 ? 'block' : 'none';
+  }
+
+  /** Runs fn once every in-flight server call has settled. */
+  function whenIdle(fn) {
+    if (pending === 0) {
+      setTimeout(fn, 0);
+      return;
+    }
+    var timer = setInterval(function () {
+      if (pending > 0) return;
+      clearInterval(timer);
+      fn();
+    }, 120);
+  }
+
+  /* -------------------------------------------------------------- formatting */
+
+  function esc(value) {
+    return String(value === null || value === undefined ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /** dd/MM/yyyy in the Gregorian calendar (SPEC §3). */
+  function fmtDate(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear();
+  }
+
+  function fmtDateTime(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return fmtDate(iso) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  /** yyyy-MM-dd, the value format an <input type="date"> expects. */
+  function toInputDate(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
+  function pad(n) { return n < 10 ? '0' + n : String(n); }
+
+  function fmtMoney(value) {
+    if (value === null || value === undefined || value === '') return '';
+    var n = Number(value);
+    if (isNaN(n)) return '';
+    return n.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  /** The active entries of one Config_Lists list, as the server sent them. */
+  function listOf(listName) {
+    return state.lists[listName] || [];
+  }
+
+  function hasCode(listName, code) {
+    return listOf(listName).some(function (it) { return it.code === code; });
+  }
+
+  /** Thai label for a code, falling back to the code itself. */
+  function labelOf(listName, code) {
+    if (!code) return '';
+    var items = listOf(listName);
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].code === code) return items[i].label;
+    }
+    return code;
+  }
+
+  /**
+   * The inverse of labelOf: a column pasted out of a BOQ holds "ตารางเมตร", not "SQM".
+   * Matches the code first, then the Thai label, and hands back anything it does
+   * not recognise so the preview can mark that row instead of silently blanking it.
+   */
+  function codeFromLabel(listName, text) {
+    if (!text) return '';
+    var wanted = String(text).trim();
+    var folded = wanted.toUpperCase();
+    var items = listOf(listName);
+    for (var i = 0; i < items.length; i++) {
+      if (String(items[i].code).toUpperCase() === folded) return items[i].code;
+    }
+    for (var j = 0; j < items.length; j++) {
+      if (String(items[j].label).trim() === wanted) return items[j].code;
+    }
+    return wanted;
+  }
+
+  function statusLabel(code) {
+    for (var i = 0; i < state.statuses.length; i++) {
+      if (state.statuses[i].code === code) return state.statuses[i].label;
+    }
+    return code || '';
+  }
+
+  function statusBadgeClass(code) {
+    if (code === 'CANCELLED') return 'bad';
+    if (code === 'CLOSED') return 'ok';
+    return 'info';
+  }
+
+  /** <option> markup for a config list, optionally filtered by parent code. */
+  function optionsFor(listName, selected, parentCode, placeholder) {
+    var items = listOf(listName).filter(function (it) {
+      if (parentCode === undefined || parentCode === null || parentCode === '') return true;
+      return !it.parent || it.parent === parentCode;
+    });
+    var html = placeholder === false ? '' : '<option value="">' + esc(placeholder || '— เลือก —') + '</option>';
+    items.forEach(function (it) {
+      html += '<option value="' + esc(it.code) + '"' + (it.code === selected ? ' selected' : '') + '>' +
+        esc(it.label) + '</option>';
+    });
+    return html;
+  }
+
+  /* --------------------------------------------------------------- messaging */
+
+  function toast(message, kind) {
+    var host = document.getElementById('toastHost');
+    var el = document.createElement('div');
+    el.className = 'toast' + (kind ? ' ' + kind : '');
+    el.textContent = message;
+    host.appendChild(el);
+    setTimeout(function () { el.remove(); }, kind === 'bad' ? 7000 : 3500);
+  }
+
+  /** Turns a server error envelope into something a buyer can act on. */
+  function showError(error) {
+    var e = error || {};
+    if (e.code === 'CONFLICT') {
+      toast('ข้อมูลถูกแก้ไขโดยผู้อื่น กรุณาโหลดใหม่', 'bad');
+      return;
+    }
+    toast(e.message || 'เกิดข้อผิดพลาด', 'bad');
+  }
+
+  /** Renders blocking errors in red and non-blocking warnings in yellow (SPEC §8). */
+  function alertHtml(kind, title, messages) {
+    if (!messages || messages.length === 0) return '';
+    var html = '<div class="alert ' + kind + '"><strong>' + esc(title) + '</strong><ul>';
+    messages.forEach(function (m) { html += '<li>' + esc(m) + '</li>'; });
+    return html + '</ul></div>';
+  }
+
+  function showWarnings(warnings) {
+    (warnings || []).forEach(function (w) { toast(w, ''); });
+  }
+
+  /* ------------------------------------------------------------------ modal */
+
+  /** Opens a modal. `build` returns HTML; `onSubmit(form, close)` handles the primary action. */
+  function modal(options) {
+    var backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.innerHTML =
+      '<div class="modal' + (options.wide ? ' wide' : '') + '" role="dialog" aria-modal="true">' +
+        '<div class="modal-header"><h3>' + esc(options.title) + '</h3>' +
+          '<button type="button" class="subtle" data-close aria-label="ปิด">✕</button></div>' +
+        '<form><div class="modal-body">' + options.body + '</div>' +
+        '<div class="modal-footer">' +
+          '<button type="button" data-close>ยกเลิก</button>' +
+          '<button type="submit" class="primary">' + esc(options.submitLabel || 'บันทึก') + '</button>' +
+        '</div></form>' +
+      '</div>';
+    document.body.appendChild(backdrop);
+
+    function close() { backdrop.remove(); }
+    backdrop.querySelectorAll('[data-close]').forEach(function (b) { b.onclick = close; });
+    backdrop.onclick = function (e) { if (e.target === backdrop) close(); };
+
+    var form = backdrop.querySelector('form');
+    var submitButton = form.querySelector('button[type="submit"]');
+
+    form.onsubmit = function (e) {
+      e.preventDefault();
+      // Pressing save again while the first request is still in flight sends a
+      // second one. Each is a separate server execution creating its own record,
+      // so an impatient double-click quietly produces duplicate work. The button
+      // stays disabled until everything in flight has settled.
+      if (submitButton.disabled) return;
+      submitButton.disabled = true;
+      options.onSubmit(form, close);
+      whenIdle(function () {
+        if (document.body.contains(backdrop)) submitButton.disabled = false;
+      });
+    };
+    if (options.onOpen) options.onOpen(form, close);
+    var first = form.querySelector('input, select, textarea');
+    if (first) first.focus();
+    return { close: close, form: form };
+  }
+
+  /**
+   * Prompts for the reason the spec requires before price edits, status reversals,
+   * deletions, reassignment, exceptions and reopen (SPEC §6.3).
+   */
+  function askReason(title, message) {
+    return new Promise(function (resolve) {
+      modal({
+        title: title,
+        submitLabel: 'ยืนยัน',
+        body: (message ? '<p class="muted">' + esc(message) + '</p>' : '') +
+          '<div class="field"><label for="reasonInput">เหตุผล <span class="req">*</span></label>' +
+          '<textarea id="reasonInput" name="reason" required maxlength="500" ' +
+          'placeholder="ระบุเหตุผลเพื่อบันทึกไว้ในประวัติการแก้ไข"></textarea></div>',
+        onSubmit: function (form, close) {
+          var reason = form.reason.value.trim();
+          if (!reason) return;
+          close();
+          resolve(reason);
+        }
+      });
+    });
+  }
+
+  function confirmAction(title, message, confirmLabel) {
+    return new Promise(function (resolve) {
+      var m = modal({
+        title: title,
+        submitLabel: confirmLabel || 'ยืนยัน',
+        body: '<p>' + esc(message) + '</p>',
+        onSubmit: function (form, close) { close(); resolve(true); }
+      });
+      m.form.querySelectorAll('[data-close]').forEach(function (b) {
+        b.addEventListener('click', function () { resolve(false); });
+      });
+    });
+  }
+
+  /* ------------------------------------------------- views and case-detail tabs */
+
+  /** view = { id, label, roles?, visible?(state), render(container, param) } */
+  function registerView(view) {
+    views[view.id] = view;
+    if (viewOrder.indexOf(view.id) === -1) viewOrder.push(view.id);
+  }
+
+  /**
+   * Extension point (SPEC §10.5): a new module calls this from its own
+   * view file and its tab appears in Case Detail without touching an existing tab.
+   * tab = { id, label, order?, visible?(ctx), render(container, ctx) }
+   */
+  function registerCaseTab(tab) {
+    caseTabs.push(tab);
+    caseTabs.sort(function (a, b) { return (a.order || 100) - (b.order || 100); });
+  }
+
+  function getCaseTabs(ctx) {
+    return caseTabs.filter(function (t) { return !t.visible || t.visible(ctx); });
+  }
+
+  /* ----------------------------------------------------------------- routing */
+
+  function parseHash() {
+    var raw = (location.hash || '#/cases').replace(/^#\/?/, '');
+    var parts = raw.split('/');
+    return { name: parts[0] || 'cases', param: parts[1] ? decodeURIComponent(parts[1]) : null };
+  }
+
+  function go(path) {
+    location.hash = '#/' + path;
+  }
+
+  function navigate() {
+    state.route = parseHash();
+    var view = views[state.route.name] || views.cases;
+    renderNav();
+    var host = document.getElementById('app');
+    host.innerHTML = '<div class="loading"><span class="spinner"></span> กำลังโหลด…</div>';
+    try {
+      view.render(host, state.route.param);
+    } catch (e) {
+      host.innerHTML = '<div class="alert error">แสดงผลไม่สำเร็จ: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  function renderNav() {
+    var nav = document.getElementById('mainNav');
+    var html = '';
+    viewOrder.forEach(function (id) {
+      var view = views[id];
+      if (view.hidden) return;
+      if (view.visible && !view.visible(state)) return;
+      var current = state.route.name === id ? ' aria-current="page"' : '';
+      html += '<button type="button" data-view="' + esc(id) + '"' + current + '>' + esc(view.label) + '</button>';
+    });
+    nav.innerHTML = html;
+    nav.querySelectorAll('[data-view]').forEach(function (b) {
+      b.onclick = function () { go(b.dataset.view); };
+    });
+  }
+
+  /* ------------------------------------------------------------------ startup */
+
+  function start() {
+    api('api_bootstrap').then(function (data) {
+      state.user = data.user;
+      state.permissions = data.permissions;
+      state.lists = data.lists;
+      state.statuses = data.statuses;
+      state.settings = data.settings;
+      state.buyers = data.buyers;
+      state.ready = true;
+      window.addEventListener('hashchange', navigate);
+      navigate();
+    }).catch(function (error) {
+      document.getElementById('app').innerHTML =
+        '<div class="alert error"><strong>เข้าใช้งานไม่ได้</strong><br>' + esc(error.message) + '</div>';
+    });
+  }
+
+  return {
+    state: state,
+    api: api,
+    esc: esc,
+    fmtDate: fmtDate,
+    fmtDateTime: fmtDateTime,
+    toInputDate: toInputDate,
+    fmtMoney: fmtMoney,
+    listOf: listOf,
+    hasCode: hasCode,
+    labelOf: labelOf,
+    codeFromLabel: codeFromLabel,
+    statusLabel: statusLabel,
+    statusBadgeClass: statusBadgeClass,
+    optionsFor: optionsFor,
+    toast: toast,
+    showError: showError,
+    showWarnings: showWarnings,
+    alertHtml: alertHtml,
+    modal: modal,
+    askReason: askReason,
+    confirmAction: confirmAction,
+    registerView: registerView,
+    registerCaseTab: registerCaseTab,
+    getCaseTabs: getCaseTabs,
+    go: go,
+    navigate: navigate,
+    start: start
+  };
+})();
+</script>
