@@ -296,12 +296,27 @@ var Repository = (function () {
 
   /* ----------------------------------------------------------------- writes */
 
+  /**
+   * Lays the values out in the sheet's own column order.
+   *
+   * A column the schema declares but the sheet does not yet have means setup()
+   * has not been run since that column was added. Silently dropping a value the
+   * caller asked to store is the worst of the options: the write reports success,
+   * the data is gone, and the rule that just validated the value reads the blank
+   * cell back and refuses the next edit of the same record. A blank is dropped
+   * quietly because storing it would change nothing either way, so an older sheet
+   * keeps working for everything that does not use the new column.
+   */
   function buildRow(tableName, meta, values) {
     var row = new Array(meta.headers.length);
     for (var i = 0; i < row.length; i++) row[i] = '';
     Object.keys(values).forEach(function (name) {
       var position = meta.index[name];
-      if (position === undefined) return;
+      if (position === undefined) {
+        if (Utils.isBlank(values[name])) return;
+        throw Err.internal('ชีต ' + Schema.getTable(tableName).sheet + ' ยังไม่มีคอลัมน์ ' + name +
+          ' — ผู้ดูแลระบบต้องรัน setup() หนึ่งครั้งหลังอัปเดตโค้ด');
+      }
       row[position] = values[name];
     });
     return row;

@@ -147,7 +147,8 @@
           row('ผู้ขอ', c.Requester_Name + (c.Requester_Email ? ' (' + c.Requester_Email + ')' : '')) +
           row('หน่วยงาน', App.labelOf('DEPARTMENT', c.Department_Code)) +
           row('วิธีจัดซื้อ', App.labelOf('METHOD', c.Method)) +
-          row('ประเภทงบ', App.labelOf('BUDGET_TYPE', c.Budget_Type) + ' / ' + App.labelOf('SUB_TYPE', c.Sub_Type)) +
+          row('ประเภทงบ', App.labelOf('BUDGET_TYPE', c.Budget_Type) +
+            (c.Budget_Type_Other ? ' — ' + c.Budget_Type_Other : ' / ' + App.labelOf('SUB_TYPE', c.Sub_Type))) +
           row('รายละเอียดงาน', c.Description) +
           row('วันที่ต้องการ', App.fmtDate(c.Required_Date)) +
           row('ข้อมูลจากผู้ขอ', c.Intake_Complete ? 'ครบถ้วน' : 'ยังไม่ครบ') +

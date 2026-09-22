@@ -109,13 +109,13 @@
           App.optionsFor('ACTIVITY_TYPE', a.Activity_Type, 'M1') + '</select>', true) +
         App.caseForm.field('Channel', 'ช่องทาง',
           '<select name="Channel">' + App.optionsFor('CHANNEL', a.Channel) + '</select>') +
-        App.caseForm.field('Vendor_ID__input', 'เกี่ยวกับผู้ขาย (ถ้ามี)',
+        App.caseForm.field('Vendor_ID__input', 'เกี่ยวกับผู้ขาย',
           App.combobox.html({
             name: 'Vendor_ID',
             placeholder: 'พิมพ์ชื่อผู้ขาย หรือเลขผู้เสียภาษี',
             text: a.Vendor_ID ? (ctx.vendorNames[a.Vendor_ID] || a.Vendor_ID) : '',
             value: a.Vendor_ID || ''
-          })) +
+          }), true) +
         '<div class="field span-all"><label>รายละเอียดกิจกรรม <span class="req">*</span></label>' +
           '<textarea name="Activity_Description" required maxlength="2000">' +
           App.esc(a.Activity_Description || '') + '</textarea></div>' +
@@ -128,6 +128,15 @@
           '<input type="url" name="Attachment_URL" value="' + App.esc(a.Attachment_URL || '') + '">') +
         '</div>',
       onSubmit: function (form, close) {
+        // The form submits the combobox's hidden input, and a hidden input is
+        // barred from the browser's own required check — so this is the only
+        // thing standing between a typed-but-unchosen name and the server.
+        if (!form.Vendor_ID.value) {
+          App.toast('กรุณาเลือกผู้ขายจากรายการ', 'bad');
+          var box = form.querySelector('#Vendor_ID__input');
+          if (box) box.focus();
+          return;
+        }
         var payload = {
           Activity_Date: form.Activity_Date.value ? new Date(form.Activity_Date.value).toISOString() : '',
           Activity_Type: form.Activity_Type.value,
@@ -151,8 +160,7 @@
         App.combobox.wire(form, {
           name: 'Vendor_ID',
           search: searchVendors,
-          emptyText: 'ไม่พบผู้ขายรายนี้ในทะเบียน — เพิ่มได้ที่เมนู "ผู้ขาย" ' +
-            'หรือเว้นว่างไว้ถ้ากิจกรรมนี้ไม่เจาะจงผู้ขาย'
+          emptyText: 'ไม่พบผู้ขายรายนี้ในทะเบียน — เพิ่มได้ที่เมนู "ผู้ขาย" แล้วกลับมาเลือกอีกครั้ง'
         });
       }
     });

@@ -7,6 +7,9 @@
 
   var filters = { scope: 'mine', status: '', budgetType: '', from: '', to: '', q: '' };
 
+  /** Mirrors CaseService.OTHER_BUDGET_TYPE — the server is what enforces it. */
+  var OTHER_BUDGET_TYPE = 'OTHER';
+
   function render(host) {
     host.innerHTML = shell();
     bindFilters(host);
@@ -106,7 +109,7 @@
         '<td>' + App.esc(c.Description) + '<div class="faint">' + App.esc(c.Request_Ref) + ' · ' +
           App.esc(c.Requester_Name) + '</div></td>' +
         '<td class="nowrap">' + App.esc(App.labelOf('BUDGET_TYPE', c.Budget_Type)) +
-          '<div class="faint">' + App.esc(App.labelOf('SUB_TYPE', c.Sub_Type)) + '</div></td>' +
+          '<div class="faint">' + App.esc(budgetDetail(c)) + '</div></td>' +
         '<td class="nowrap"><span class="badge ' + App.statusBadgeClass(c.Status) + '">' +
           App.esc(App.statusLabel(c.Status)) + '</span></td>' +
         '<td class="nowrap">' + prCell(c) + '</td>' +
@@ -124,6 +127,13 @@
       '<th>รหัสงาน</th><th>รายละเอียด</th><th>ประเภทงบ</th><th>สถานะ</th>' +
       '<th>เลข PR / บริษัท</th><th>สิ่งที่ต้องทำต่อ</th><th>วันที่รับเรื่อง</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  /** On OTHER the department's own words stand in for the sub type. */
+  function budgetDetail(c) {
+    return c.Budget_Type === OTHER_BUDGET_TYPE
+      ? (c.Budget_Type_Other || '')
+      : App.labelOf('SUB_TYPE', c.Sub_Type);
   }
 
   /**
@@ -188,6 +198,10 @@
         '<select name="Budget_Type" required>' + App.optionsFor('BUDGET_TYPE', c.Budget_Type) + '</select>', true) +
       field('Sub_Type', 'ประเภทย่อย',
         '<select name="Sub_Type" required>' + App.optionsFor('SUB_TYPE', c.Sub_Type, c.Budget_Type || '\u0000') + '</select>', true) +
+      field('Budget_Type_Other', 'ระบุประเภทงบ',
+        '<input type="text" name="Budget_Type_Other" maxlength="200" ' +
+        'placeholder="เช่น งบส่วนกลาง งบโครงการพิเศษ" value="' +
+        App.esc(c.Budget_Type_Other || '') + '">', true) +
       field('Required_Date', 'วันที่หน่วยงานต้องการ',
         '<input type="date" name="Required_Date" value="' + App.esc(App.toInputDate(c.Required_Date)) + '">') +
       '<div class="field span-all"><label>รายละเอียดงาน <span class="req">*</span></label>' +
@@ -206,13 +220,41 @@
       (required ? ' <span class="req">*</span>' : '') + '</label>' + control + '</div>';
   }
 
-  /** Sub_Type depends on Budget_Type (Config_Lists.Parent_Code), so it reloads on change. */
+  /**
+   * Budget_Type drives the two fields under it.
+   *
+   * Normally Sub_Type is a list filtered by Config_Lists.Parent_Code, so it
+   * reloads whenever the budget type changes. On OTHER there is no sub type to
+   * pick — the department writes what the budget is instead — so the two fields
+   * swap places.
+   *
+   * The `required` attribute has to come off the field being hidden, not just the
+   * field itself: a hidden input that is still required makes the browser refuse
+   * to submit while showing the user nothing at all.
+   */
   function wireBudgetType(form) {
     var budget = form.Budget_Type;
     var sub = form.Sub_Type;
-    budget.addEventListener('change', function () {
-      sub.innerHTML = App.optionsFor('SUB_TYPE', '', budget.value || '\u0000');
-    });
+    var other = form.Budget_Type_Other;
+
+    function show(input, on) {
+      var field = input.closest('.field');
+      if (field) field.hidden = !on;
+      if (on) input.setAttribute('required', 'required'); else input.removeAttribute('required');
+      if (!on) input.value = '';
+    }
+
+    function apply(refreshOptions) {
+      var isOther = budget.value === OTHER_BUDGET_TYPE;
+      if (!isOther && refreshOptions) {
+        sub.innerHTML = App.optionsFor('SUB_TYPE', '', budget.value || '\u0000');
+      }
+      show(sub, !isOther);
+      show(other, isOther);
+    }
+
+    budget.addEventListener('change', function () { apply(true); });
+    apply(false);                      // an existing Case must open in the right mode
   }
 
   function readCaseForm(form) {
@@ -225,6 +267,7 @@
       Method: form.Method.value,
       Budget_Type: form.Budget_Type.value,
       Sub_Type: form.Sub_Type.value,
+      Budget_Type_Other: form.Budget_Type_Other.value.trim(),
       Description: form.Description.value.trim(),
       Required_Date: form.Required_Date.value,
       Intake_Complete: form.Intake_Complete.checked,

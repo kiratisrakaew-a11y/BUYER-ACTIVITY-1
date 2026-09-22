@@ -59,7 +59,8 @@ var Schema = (function () {
         { name: 'Department_Code', type: 'code', required: true, list: 'DEPARTMENT' },
         { name: 'Method', type: 'code', required: true, list: 'METHOD' },
         { name: 'Budget_Type', type: 'code', required: true, list: 'BUDGET_TYPE' },
-        { name: 'Sub_Type', type: 'code', required: true, list: 'SUB_TYPE', parent: 'Budget_Type' },
+        { name: 'Sub_Type', type: 'code', list: 'SUB_TYPE', parent: 'Budget_Type' },
+        { name: 'Budget_Type_Other', type: 'string', max: 200 },
         { name: 'Description', type: 'text', required: true, max: 2000 },
         { name: 'Required_Date', type: 'date' },
         { name: 'Intake_Complete', type: 'bool', required: true },
@@ -85,7 +86,7 @@ var Schema = (function () {
       columns: [
         { name: 'Activity_ID', type: 'string', required: true },
         { name: 'Case_ID', type: 'string', required: true },
-        { name: 'Vendor_ID', type: 'string' },
+        { name: 'Vendor_ID', type: 'string', required: true },
         { name: 'Module', type: 'code', required: true },
         { name: 'Activity_Date', type: 'datetime', required: true },
         { name: 'Activity_Type', type: 'code', required: true, list: 'ACTIVITY_TYPE' },

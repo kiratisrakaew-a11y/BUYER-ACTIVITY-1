@@ -490,6 +490,37 @@ test('Repository coerces types on the way in and out of the sheet', function () 
   });
 });
 
+test('a value for a column the sheet has not got yet is refused, not dropped', function () {
+  withFreshDatabase(function () {
+    // A column added to the schema by an update whose setup() has not been run.
+    var table = Schema.getTable('Activities');
+    table.columns.push({ name: 'Follow_Up_Owner', type: 'string', max: 100 });
+    Repository.resetCache('Activities');
+    try {
+      var base = {
+        Case_ID: 'SRC-2026-0001', Module: 'M1', Activity_Date: new Date(),
+        Activity_Type: 'CALL', Activity_Description: 'โทรติดตาม',
+        Performed_By: 'buyer.a@example.com', Vendor_ID: 'VEN-00001'
+      };
+
+      // Nothing to store in it: the older sheet keeps working.
+      var ok = Repository.insert('Activities', Object.assign({}, base, { Follow_Up_Owner: '' }),
+        { actor: 'buyer.a@example.com' });
+      assert(!!ok.Activity_ID, 'a blank in the missing column is harmless');
+
+      var error = assertThrowsCode('INTERNAL', function () {
+        Repository.insert('Activities', Object.assign({}, base, { Follow_Up_Owner: 'คุณเอ' }),
+          { actor: 'buyer.a@example.com' });
+      }, 'a real value cannot be stored');
+      assertContains(error.message, 'Follow_Up_Owner', 'the message names the column');
+      assertContains(error.message, 'setup()', 'and what to do about it');
+    } finally {
+      table.columns.pop();
+      Repository.resetCache('Activities');
+    }
+  });
+});
+
 test('queryByCase finds only the rows of that Case', function () {
   withFreshDatabase(function () {
     ['SRC-2026-0001', 'SRC-2026-0001', 'SRC-2026-0002'].forEach(function (caseId, i) {
@@ -576,9 +607,29 @@ function asUser(email, fn) {
 }
 
 /** A fresh database that already has the five standard users. */
+/**
+ * One supplier on the register, written straight through Repository so the
+ * fixture needs no signed-in user. Every activity has to name a vendor, so a
+ * database with people in it but nothing to buy from cannot record any work.
+ * Its Tax_ID sits well clear of the ones the vendor tests mint for themselves.
+ */
+var FIXTURE_VENDOR_ID = null;
+
+function seedFixtureVendor() {
+  var vendor = Repository.insert('Vendors', {
+    Vendor_Name: 'บจก. ผู้ขายประจำชุดทดสอบ',
+    Tax_ID: '0999900000001',
+    Vendor_Status: 'APPROVED'
+  }, { actor: 'setup' });
+  FIXTURE_VENDOR_ID = vendor.Vendor_ID;
+  return vendor;
+}
+
+/** A fresh database that already has the five standard users and one vendor. */
 function withUsers(fn) {
   return withFreshDatabase(function (report) {
     seedUsers();
+    seedFixtureVendor();
     return fn(report);
   });
 }
@@ -808,6 +859,76 @@ test('api_updateCase refuses to change owner or status through the back door', f
   });
 });
 
+/** The administrator's own addition: a budget type with no sub types under it. */
+function addOtherBudgetType() {
+  Config.getSheet('Config_Lists').appendRow(['BUDGET_TYPE', 'OTHER', 'งบอื่นๆ', '', 90, true]);
+  Config.clearCache();
+}
+
+test('a Case on the OTHER budget type describes itself instead of picking a sub type', function () {
+  withUsers(function () {
+    addOtherBudgetType();
+
+    asUser(USERS.buyerA, function () {
+      assertApiError(api_createCase(newCasePayload({
+        Budget_Type: 'OTHER', Sub_Type: '', Budget_Type_Other: ''
+      })), 'VALIDATION', 'OTHER without a description');
+
+      var created = assertApiOk(api_createCase(newCasePayload({
+        Budget_Type: 'OTHER', Sub_Type: '', Budget_Type_Other: 'งบส่วนกลางฝ่ายปฏิบัติการ'
+      }))).caseRecord;
+      assertEquals(created.Budget_Type_Other, 'งบส่วนกลางฝ่ายปฏิบัติการ', 'the description is kept');
+      assertEquals(Utils.isBlank(created.Sub_Type), true, 'and no sub type is stored');
+    });
+  });
+});
+
+test('every other budget type still has to name a sub type', function () {
+  withUsers(function () {
+    asUser(USERS.buyerA, function () {
+      assertApiError(api_createCase(newCasePayload({ Sub_Type: '' })),
+        'VALIDATION', 'CAPEX without a sub type');
+    });
+  });
+});
+
+test('switching the budget type clears the field that no longer applies', function () {
+  withUsers(function () {
+    addOtherBudgetType();
+    var caseId = asUser(USERS.buyerA, function () {
+      return assertApiOk(api_createCase(newCasePayload({
+        Budget_Type: 'OTHER', Sub_Type: '', Budget_Type_Other: 'งบส่วนกลาง'
+      }))).caseRecord.Case_ID;
+    });
+
+    asUser(USERS.buyerA, function () {
+      // Moving off OTHER without naming a sub type leaves the Case describing
+      // nothing at all, so it is refused.
+      assertApiError(api_updateCase(caseId, { Budget_Type: 'CAPEX' },
+        currentCase(caseId).Version), 'VALIDATION', 'a sub type is needed now');
+
+      assertApiOk(api_updateCase(caseId,
+        { Budget_Type: 'CAPEX', Sub_Type: 'RENOVATE' }, currentCase(caseId).Version));
+    });
+
+    var after = currentCase(caseId);
+    assertEquals(after.Sub_Type, 'RENOVATE', 'the sub type took');
+    assertEquals(Utils.isBlank(after.Budget_Type_Other), true,
+      'and the OTHER description did not linger in the sheet');
+  });
+});
+
+test('an activity has to name the vendor it was about', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+    asUser(USERS.buyerA, function () {
+      assertApiError(api_saveActivity(caseId, activityPayload({ Vendor_ID: '' })),
+        'VALIDATION', 'no vendor named');
+      assertApiOk(api_saveActivity(caseId, activityPayload()), 'the fixture vendor is fine');
+    });
+  });
+});
+
 test('My Cases lists only what the caller may see and flags overdue next actions', function () {
   withUsers(function () {
     var mine = createCaseAs(USERS.buyerA, { Description: 'งานของเอ' });
@@ -930,7 +1051,8 @@ test('the vendor register is searchable by name and by tax id', function () {
       assertEquals(assertApiOk(api_searchVendors('เมกะ')).vendors.length, 1, 'by name');
       assertEquals(assertApiOk(api_searchVendors('0105500000001')).vendors.length, 1, 'by tax id');
       assertEquals(assertApiOk(api_searchVendors('ไม่มีอยู่จริง')).vendors.length, 0, 'no match');
-      assertEquals(assertApiOk(api_searchVendors('')).vendors.length, 1, 'an empty query lists them all');
+      assertEquals(assertApiOk(api_searchVendors('')).vendors.length, 2,
+        'an empty query lists them all, fixture vendor included');
     });
   });
 });
@@ -959,6 +1081,7 @@ test('an upload lands in the Case folder and is shared inside the domain only', 
 
 function activityPayload(overrides) {
   return Object.assign({
+    Vendor_ID: FIXTURE_VENDOR_ID,
     Activity_Type: 'COORDINATE',
     Channel: 'EMAIL',
     Activity_Description: 'ส่งอีเมลสรุปความต้องการให้หน่วยงานผู้ขอยืนยัน',
@@ -1924,8 +2047,11 @@ function forceDuplicateKey(tableName, idToBreak, idToUse) {
 test('findById refuses to guess when two live rows share one primary key', function () {
   withUsers(function () {
     var first = createVendorAs(USERS.admin).vendor;
-    createVendorAs(USERS.admin, { Vendor_Name: 'บริษัท อื่น จำกัด', Tax_ID: '0105500000002' });
-    var brokenRow = forceDuplicateKey('Vendors', 'VEN-00002', first.Vendor_ID);
+    var second = createVendorAs(USERS.admin, {
+      Vendor_Name: 'บริษัท อื่น จำกัด', Tax_ID: '0105500000002'
+    }).vendor;
+    // Name the row to break rather than assuming which number it was issued.
+    var brokenRow = forceDuplicateKey('Vendors', second.Vendor_ID, first.Vendor_ID);
 
     var threw = null;
     try {

@@ -9,12 +9,24 @@ var CaseService = (function () {
 
   var INITIAL_STATUS = 'OPEN';
 
+  /**
+   * The one budget type that has no sub types under it, because "other" is what
+   * you pick when none of them fit. A Case on it carries a written description
+   * instead, which the requesting department fills in.
+   *
+   * This is a Code in the Config_Lists sheet, so an administrator can rename its
+   * Label_TH freely — but renaming the Code itself would leave this rule matching
+   * nothing, and the requirement would disappear without a word. That caution is
+   * written down in README §5.
+   */
+  var OTHER_BUDGET_TYPE = 'OTHER';
+
   /** Fields a buyer fills in. Status, owner, and the PR number a Case is closed
    *  with move through their own operations so each carries its own rule and
    *  audit action. */
   var EDITABLE_FIELDS = [
     'Request_Date', 'Request_Ref', 'Requester_Name', 'Requester_Email',
-    'Department_Code', 'Method', 'Budget_Type', 'Sub_Type', 'Description',
+    'Department_Code', 'Method', 'Budget_Type', 'Sub_Type', 'Budget_Type_Other', 'Description',
     'Required_Date', 'Intake_Complete', 'Intake_Note'
   ];
 
@@ -29,6 +41,7 @@ var CaseService = (function () {
     values.Buyer_Owner = user.email;
     values.Status = INITIAL_STATUS;
     values.Intake_Complete = Utils.toBool(values.Intake_Complete);
+    applyBudgetType(values, values);
     Validation.validate('Cases', values, { partial: false });
 
     var warnings = duplicateCaseWarnings(values.Request_Ref);
@@ -45,6 +58,39 @@ var CaseService = (function () {
 
     var created = Repository.insert('Cases', values, { actor: user.email, id: caseId });
     return { caseRecord: Repository.toClient(created), warnings: warnings };
+  }
+
+  /**
+   * A Case carries a Sub_Type or a written budget description — never both, and
+   * never neither.
+   *
+   * `patch` is what will be written and `proposed` is the Case as it will read
+   * afterwards; on a create they are the same object. Clearing the field that no
+   * longer applies is part of the rule rather than a separate tidy-up: a Case
+   * switched from CAPEX to OTHER would otherwise keep its old Sub_Type sitting in
+   * the sheet, and every report reading that column would still count it as one.
+   */
+  function applyBudgetType(patch, proposed) {
+    // Neither field is being touched and the Case is already consistent.
+    if (!Object.prototype.hasOwnProperty.call(patch, 'Budget_Type') &&
+        !Object.prototype.hasOwnProperty.call(patch, 'Sub_Type') &&
+        !Object.prototype.hasOwnProperty.call(patch, 'Budget_Type_Other')) {
+      return patch;
+    }
+
+    if (proposed.Budget_Type === OTHER_BUDGET_TYPE) {
+      if (Utils.isBlank(proposed.Budget_Type_Other)) {
+        throw Err.validation('เมื่อเลือกประเภทงบ "' + Config.labelOf('BUDGET_TYPE', OTHER_BUDGET_TYPE) +
+          '" ต้องระบุด้วยว่าเป็นงบประเภทใด', { field: 'Budget_Type_Other' });
+      }
+      patch.Sub_Type = '';
+    } else {
+      if (Utils.isBlank(proposed.Sub_Type)) {
+        throw Err.validation('กรุณาเลือกประเภทย่อย', { field: 'Sub_Type' });
+      }
+      patch.Budget_Type_Other = '';
+    }
+    return patch;
   }
 
   /** SPEC §6.2 — opening a Case whose Request_Ref matches a live one is a warning,
@@ -113,6 +159,9 @@ var CaseService = (function () {
     if (Object.prototype.hasOwnProperty.call(clean, 'Intake_Complete')) {
       clean.Intake_Complete = Utils.toBool(clean.Intake_Complete);
     }
+    // The rule spans two fields, so it has to see the Case as it will be, not the
+    // handful of fields this request happens to carry.
+    applyBudgetType(clean, Object.assign({}, caseRecord, clean));
     Validation.validate('Cases', clean, { partial: true, existing: caseRecord });
 
     var updated = Repository.update('Cases', caseId, clean, version, {
@@ -272,6 +321,7 @@ var CaseService = (function () {
 
   return {
     INITIAL_STATUS: INITIAL_STATUS,
+    OTHER_BUDGET_TYPE: OTHER_BUDGET_TYPE,
     EDITABLE_FIELDS: EDITABLE_FIELDS,
     create: create,
     requireCase: requireCase,
