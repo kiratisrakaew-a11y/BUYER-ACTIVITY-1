@@ -277,22 +277,48 @@ var CaseService = (function () {
   }
 
   /**
+   * Beyond this many distinct vendors on one Case, looking each one up costs more
+   * in round trips than reading the register once and picking from it.
+   */
+  var MAX_VENDOR_LOOKUPS = 10;
+
+  /**
    * Vendor_ID -> name for the vendors named in these activities, so the timeline
    * can show who was contacted without the client fetching the register.
-   * Reads nothing when no activity names a vendor, which is the common case.
+   *
+   * The ids are known before anything is read, so each one is fetched by id
+   * rather than by reading the register and discarding nearly all of it. That
+   * keeps the cost proportional to the Case — a Case naming three vendors costs
+   * the same whether the register holds fifty or five thousand.
+   *
+   * Deleted vendors are included on purpose: a vendor removed from the register
+   * is still the vendor that old activity was about, and the timeline should say
+   * so by name rather than falling back to a bare id.
    */
   function vendorNamesFor(activities) {
-    var wanted = {};
-    var any = false;
-    activities.forEach(function (a) {
-      if (Utils.isBlank(a.Vendor_ID)) return;
-      wanted[a.Vendor_ID] = true;
-      any = true;
-    });
-    if (!any) return {};
+    var ids = Utils.unique(activities
+      .map(function (a) { return a.Vendor_ID; })
+      .filter(function (id) { return !Utils.isBlank(id); }));
+    if (ids.length === 0) return {};
+
     var names = {};
-    Repository.query('Vendors', { includeDeleted: true }).forEach(function (v) {
-      if (wanted[v.Vendor_ID]) names[v.Vendor_ID] = v.Vendor_Name;
+    if (ids.length > MAX_VENDOR_LOOKUPS) {
+      var wanted = {};
+      ids.forEach(function (id) { wanted[id] = true; });
+      Repository.query('Vendors', { includeDeleted: true }).forEach(function (v) {
+        if (wanted[v.Vendor_ID]) names[v.Vendor_ID] = v.Vendor_Name;
+      });
+      return names;
+    }
+
+    ids.forEach(function (id) {
+      // query() rather than findById(): a duplicated id is a problem for
+      // verifyDeployment to report, not a reason to take the Case page down over
+      // a display name.
+      var found = Repository.query('Vendors', {
+        indexColumn: 'Vendor_ID', indexValue: id, includeDeleted: true
+      });
+      if (found.length) names[id] = found[0].Vendor_Name;
     });
     return names;
   }
@@ -322,6 +348,7 @@ var CaseService = (function () {
   return {
     INITIAL_STATUS: INITIAL_STATUS,
     OTHER_BUDGET_TYPE: OTHER_BUDGET_TYPE,
+    MAX_VENDOR_LOOKUPS: MAX_VENDOR_LOOKUPS,
     EDITABLE_FIELDS: EDITABLE_FIELDS,
     create: create,
     requireCase: requireCase,

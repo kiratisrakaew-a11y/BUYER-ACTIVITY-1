@@ -1226,6 +1226,85 @@ test('an activity may only name a vendor that is on the register', function () {
   });
 });
 
+/** Writes a vendor straight through Repository, so no API rule or user is needed. */
+function makeRegisteredVendor(name, taxId) {
+  return Repository.insert('Vendors', {
+    Vendor_Name: name, Tax_ID: taxId, Vendor_Status: 'APPROVED'
+  }, { actor: 'setup' });
+}
+
+test('the timeline resolves only the vendors its own activities name', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+    var a = makeRegisteredVendor('บจก. ผู้ขาย ก', '0999900000010');
+    var b = makeRegisteredVendor('บจก. ผู้ขาย ข', '0999900000011');
+    makeRegisteredVendor('บจก. ผู้ขายที่ไม่เกี่ยวข้อง', '0999900000012');
+
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_saveActivity(caseId, activityPayload({ Vendor_ID: a.Vendor_ID })));
+      assertApiOk(api_saveActivity(caseId, activityPayload({
+        Vendor_ID: b.Vendor_ID, Activity_Date: '2026-01-21T03:00:00.000Z'
+      })));
+    });
+
+    var names = asUser(USERS.buyerA, function () {
+      return assertApiOk(api_getCase(caseId)).vendorNames;
+    });
+    assertEquals(names[a.Vendor_ID], 'บจก. ผู้ขาย ก', 'first vendor resolved');
+    assertEquals(names[b.Vendor_ID], 'บจก. ผู้ขาย ข', 'second vendor resolved');
+    assertEquals(Object.keys(names).length, 2, 'and nothing else was dragged along');
+  });
+});
+
+test('a vendor removed from the register still shows by name on the timeline', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+    var vendor = makeRegisteredVendor('บจก. ที่ถูกลบภายหลัง', '0999900000020');
+
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_saveActivity(caseId, activityPayload({ Vendor_ID: vendor.Vendor_ID })));
+    });
+    Repository.softDelete('Vendors', vendor.Vendor_ID, null,
+      { actor: USERS.admin, reason: 'เลิกใช้ผู้ขายรายนี้' });
+
+    var names = asUser(USERS.buyerA, function () {
+      return assertApiOk(api_getCase(caseId)).vendorNames;
+    });
+    assertEquals(names[vendor.Vendor_ID], 'บจก. ที่ถูกลบภายหลัง',
+      'the activity still says who it was about');
+  });
+});
+
+test('both vendor lookup paths return the same names', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+    var expected = {};
+
+    // Past the threshold on purpose, so this Case takes the read-everything path
+    // rather than looking each vendor up. Read from the constant so the test keeps
+    // exercising that path if the threshold is ever retuned.
+    var count = CaseService.MAX_VENDOR_LOOKUPS + 2;
+    for (var i = 0; i < count; i++) {
+      var vendor = makeRegisteredVendor('บจก. ผู้ขายที่ ' + i, '09999001000' + (10 + i));
+      expected[vendor.Vendor_ID] = vendor.Vendor_Name;
+      asUser(USERS.buyerA, function () {
+        assertApiOk(api_saveActivity(caseId, activityPayload({
+          Vendor_ID: vendor.Vendor_ID,
+          Activity_Description: 'ติดต่อผู้ขายรายที่ ' + i
+        })));
+      });
+    }
+
+    var names = asUser(USERS.buyerA, function () {
+      return assertApiOk(api_getCase(caseId)).vendorNames;
+    });
+    assertEquals(Object.keys(names).length, count, 'every vendor on the Case resolved');
+    Object.keys(expected).forEach(function (id) {
+      assertEquals(names[id], expected[id], 'name for ' + id);
+    });
+  });
+});
+
 test('the timeline is newest first and next actions can be ticked off', function () {
   withUsers(function () {
     var caseId = createCaseAs(USERS.buyerA);
