@@ -15,11 +15,15 @@ var App = (function () {
     permissions: {},
     lists: {},
     statuses: [],
+    hints: {},
     settings: {},
     buyers: [],
     route: { name: 'cases', param: null },
     ready: false
   };
+
+  /** Shown when neither the activity type nor the sheet offers wording of its own. */
+  var DEFAULT_HINT = 'สรุปสั้นๆ ว่าทำอะไร ได้ผลอย่างไร และขั้นตอนต่อไปคืออะไร';
 
   var views = {};
   var viewOrder = [];
@@ -144,6 +148,21 @@ var App = (function () {
       if (String(items[j].label).trim() === wanted) return items[j].code;
     }
     return wanted;
+  }
+
+  /**
+   * The faint prompt inside the activity description box, which differs per
+   * activity type: what a follow-up call should record is not what closing a
+   * purchase should record.
+   *
+   * The text comes from Config_Settings so purchasing can reword it, and add it
+   * for activity types that do not exist yet, without a deployment. "|" stands in
+   * for a line break because a hint has to be typed into one spreadsheet cell,
+   * and Alt+Enter is a step people forget.
+   */
+  function hintOf(code) {
+    var text = (code && state.hints[code]) || state.hints.DEFAULT || DEFAULT_HINT;
+    return String(text).split('|').join('\n');
   }
 
   function statusLabel(code) {
@@ -537,6 +556,7 @@ var App = (function () {
       state.permissions = data.permissions;
       state.lists = data.lists;
       state.statuses = data.statuses;
+      state.hints = data.hints || {};
       state.settings = data.settings;
       state.buyers = data.buyers;
       state.ready = true;
@@ -560,6 +580,7 @@ var App = (function () {
     hasCode: hasCode,
     labelOf: labelOf,
     codeFromLabel: codeFromLabel,
+    hintOf: hintOf,
     statusLabel: statusLabel,
     statusBadgeClass: statusBadgeClass,
     optionsFor: optionsFor,

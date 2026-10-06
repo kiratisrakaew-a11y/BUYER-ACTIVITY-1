@@ -10,6 +10,7 @@ var Config = (function () {
 
   var CACHE_TTL_SECONDS = 600;            // SPEC §11 — 10 minutes
   var CACHE_PREFIX = 'bpa_v1_';
+  var HINT_PREFIX = 'HINT_ACTIVITY_';     // Config_Settings keys that carry form hints
   var DB_PROPERTY_KEY = 'DB_SPREADSHEET_ID';
 
   /** Used when a key is missing from Config_Settings (SPEC §5.3). */
@@ -179,6 +180,30 @@ var Config = (function () {
     return value;
   }
 
+  /**
+   * Hint text for the activity description box, keyed by Activity_Type code.
+   *
+   * It lives in Config_Settings rather than in the client because the activity
+   * types themselves are the company's to change: wording, codes and the list of
+   * types all move without a deployment, and a hint hard-coded against one set of
+   * codes would quietly stop matching the day somebody edits the sheet.
+   *
+   * Config_Settings is a plain key/value sheet, so a hint is a new ROW, not a new
+   * column — nothing about the database's shape changes and setup() stays out of it.
+   * The key HINT_ACTIVITY_DEFAULT is reserved for the text shown when a type has
+   * no hint of its own.
+   */
+  function getActivityHints() {
+    var settings = getSettings();
+    var hints = {};
+    Object.keys(settings).forEach(function (key) {
+      if (key.indexOf(HINT_PREFIX) !== 0) return;
+      var code = key.slice(HINT_PREFIX.length);
+      if (code && String(settings[key]).trim() !== '') hints[code] = settings[key];
+    });
+    return hints;
+  }
+
   /* ------------------------------------------------------------------ lists */
 
   /** All active Config_Lists rows grouped by List_Name and sorted by Sort_Order. */
@@ -285,6 +310,7 @@ var Config = (function () {
     getBool: getBool,
     getTimezone: getTimezone,
     setSetting: setSetting,
+    getActivityHints: getActivityHints,
     getAllLists: getAllLists,
     getList: getList,
     isValidCode: isValidCode,

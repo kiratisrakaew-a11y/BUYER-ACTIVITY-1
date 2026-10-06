@@ -192,6 +192,26 @@ test('setup seeds Config_Settings, Config_Lists and Status_Master', function () 
   });
 });
 
+test('activity hints are rows in Config_Settings, not codes in the client', function () {
+  withFreshDatabase(function () {
+    assertDeepEquals(Config.getActivityHints(), {},
+      'a database with no hint rows yields no hints, and no error');
+
+    Config.setSetting('HINT_ACTIVITY_NEGOTIATE', '• ราคาตั้งต้น|• ราคาที่ต่อรองได้');
+    Config.setSetting('HINT_ACTIVITY_DEFAULT', '• สรุปสั้นๆ ว่าทำอะไร');
+    Config.setSetting('HINT_ACTIVITY_EMPTY', '   ');
+    Config.setSetting('REMINDER_HOUR', '9');
+
+    var hints = Config.getActivityHints();
+    assertEquals(hints.NEGOTIATE, '• ราคาตั้งต้น|• ราคาที่ต่อรองได้',
+      'the key is the activity type code with the prefix stripped');
+    assertEquals(hints.DEFAULT, '• สรุปสั้นๆ ว่าทำอะไร', 'the fallback is just another row');
+    assertEquals(hints.EMPTY, undefined, 'a row left blank is not a hint');
+    assertEquals(hints.REMINDER_HOUR, undefined, 'ordinary settings are not hints');
+    assertEquals(Object.keys(hints).length, 2, 'nothing else slipped in');
+  });
+});
+
 /**
  * Runs fn() with an extra row bolted onto the seed data, the way a future
  * version of this file would ship one. Restores the real function afterwards.
@@ -690,6 +710,17 @@ test('T17 a user who is not in the Users sheet is refused', function () {
     Repository.update('Users', head.Email, { Is_Active: false }, null, { actor: 'admin' });
     asUser(USERS.head, function () {
       assertApiError(api_bootstrap(), 'UNAUTHORIZED', 'deactivated account');
+    });
+  });
+});
+
+test('api_bootstrap carries the activity hints to the browser', function () {
+  withUsers(function () {
+    Config.setSetting('HINT_ACTIVITY_OTHER', '• เขียนอะไรก็ได้');
+    asUser(USERS.buyerA, function () {
+      var data = assertApiOk(api_bootstrap());
+      assertEquals(data.hints.OTHER, '• เขียนอะไรก็ได้',
+        'the hints ride along with the first call, costing no extra round trip');
     });
   });
 });

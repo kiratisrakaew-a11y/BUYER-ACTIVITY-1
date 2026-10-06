@@ -162,8 +162,29 @@
           search: searchVendors,
           emptyText: 'ไม่พบผู้ขายรายนี้ในทะเบียน — เพิ่มได้ที่เมนู "ผู้ขาย" แล้วกลับมาเลือกอีกครั้ง'
         });
+        wireActivityHint(form);
       }
     });
+  }
+
+  /**
+   * What is worth writing down depends on what was done: a follow-up call wants
+   * the vendor's answer, closing a purchase wants the price and the saving. So the
+   * faint prompt in the description box follows the type the buyer picks, and is
+   * applied once on open as well, for an activity reopened to be edited.
+   *
+   * placeholder is set as a property, never built into the HTML — the wording comes
+   * from a spreadsheet anyone in purchasing can edit, and a property assignment
+   * cannot carry markup into the page (see rule 1 at the top of App.js).
+   */
+  function wireActivityHint(form) {
+    var type = form.Activity_Type;
+    var box = form.Activity_Description;
+    if (!type || !box) return;
+
+    function apply() { box.placeholder = App.hintOf(type.value); }
+    type.addEventListener('change', apply);
+    apply();
   }
 
   /**

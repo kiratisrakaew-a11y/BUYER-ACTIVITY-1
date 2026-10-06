@@ -59,6 +59,7 @@ function api_bootstrap() {
       permissions: Auth.permissions(user),
       lists: Config.getAllLists(),
       statuses: Config.getStatusMaster(),
+      hints: Config.getActivityHints(),
       settings: {
         BUYER_CAN_VIEW_ALL: Config.getBool('BUYER_CAN_VIEW_ALL', true),
         APP_TIMEZONE: Config.getTimezone()
