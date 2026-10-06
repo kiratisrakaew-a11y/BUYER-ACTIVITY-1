@@ -224,16 +224,25 @@ function defaultConfigLists() {
 
 function seedConfigLists(report) {
   var sheet = Config.getSheet('Config_Lists');
-  var existing = {};
+
+  // Seeding is per list, not per row. A list that already has rows belongs to the
+  // company: they renamed, reordered and removed codes to match how they actually
+  // work. Topping it up row by row would read every deletion as something missing
+  // and quietly put it back, so a routine setup() after any future update would
+  // repopulate dropdowns with codes somebody deliberately took out — and nobody
+  // would connect the two. An entirely absent list is a fresh install, and that
+  // one still gets its defaults.
+  var seeded = {};
   var lastRow = sheet.getLastRow();
   if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, 2).getValues().forEach(function (r) {
-      existing[String(r[0]).trim() + '|' + String(r[1]).trim()] = true;
+    sheet.getRange(2, 1, lastRow - 1, 1).getValues().forEach(function (r) {
+      var listName = String(r[0]).trim();
+      if (listName) seeded[listName] = true;
     });
   }
 
   var rows = defaultConfigLists()
-    .filter(function (r) { return !existing[r[0] + '|' + r[1]]; })
+    .filter(function (r) { return !seeded[r[0]]; })
     .map(function (r) { return [r[0], r[1], r[2], r[3], r[4], true]; });
 
   if (rows.length) {

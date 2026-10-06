@@ -192,6 +192,50 @@ test('setup seeds Config_Settings, Config_Lists and Status_Master', function () 
   });
 });
 
+/**
+ * Runs fn() with an extra row bolted onto the seed data, the way a future
+ * version of this file would ship one. Restores the real function afterwards.
+ */
+function withExtraDefaultListRow(row, fn) {
+  var original = defaultConfigLists;
+  defaultConfigLists = function () { return original().concat([row]); };
+  try {
+    return fn();
+  } finally {
+    defaultConfigLists = original;
+  }
+}
+
+test('setup never adds rows back to a list the company has customised', function () {
+  withFreshDatabase(function () {
+    var before = Config.getList('ACTIVITY_TYPE').length;
+
+    // Stands in for a code somebody deleted from the sheet on purpose: it is in
+    // the seed data, it is not in their list, and setup() must leave it that way.
+    withExtraDefaultListRow(['ACTIVITY_TYPE', 'DELETED_ON_PURPOSE', 'ไม่ควรโผล่', 'M1', 95], function () {
+      setup();
+    });
+    Config.clearCache();
+
+    assert(!Config.isValidCode('ACTIVITY_TYPE', 'DELETED_ON_PURPOSE'),
+      'a code missing from a list that already has rows is not put back');
+    assertEquals(Config.getList('ACTIVITY_TYPE').length, before,
+      'the list is exactly as the company left it');
+  });
+});
+
+test('setup still seeds a list the sheet has never seen', function () {
+  withFreshDatabase(function () {
+    withExtraDefaultListRow(['BRAND_NEW_LIST', 'FIRST', 'รายการแรก', '', 10], function () {
+      setup();
+    });
+    Config.clearCache();
+
+    assert(Config.isValidCode('BRAND_NEW_LIST', 'FIRST'),
+      'an entirely absent list is a fresh install and still gets its defaults');
+  });
+});
+
 test('T18 rerunning setup appends new schema columns and keeps existing data', function () {
   withFreshDatabase(function () {
     // Put a row in Cases so we can prove the data survives.
