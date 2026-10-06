@@ -69,6 +69,31 @@ function api_bootstrap() {
   });
 }
 
+/* -------------------------------------------------------------------- drafts */
+
+/**
+ * A form the browser has filled in but not submitted. Nothing here reaches the
+ * database — see DraftService for why a half-written form is kept on the server
+ * at all, and why the owner's address never comes from the browser.
+ */
+function api_saveDraft(kind, scope, values) {
+  return handle('api_saveDraft', API_ROLES.ANY, function (user) {
+    return { saved: DraftService.save(user, kind, scope, values) };
+  });
+}
+
+function api_loadDraft(kind, scope) {
+  return handle('api_loadDraft', API_ROLES.ANY, function (user) {
+    return { draft: DraftService.load(user, kind, scope) };
+  });
+}
+
+function api_clearDraft(kind, scope) {
+  return handle('api_clearDraft', API_ROLES.ANY, function (user) {
+    return { cleared: DraftService.clear(user, kind, scope) };
+  });
+}
+
 /** Admins clear the config cache after editing the Config sheets (SPEC §11). */
 function api_clearCache() {
   return handle('api_clearCache', API_ROLES.ADMIN_ONLY, function () {

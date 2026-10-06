@@ -81,11 +81,14 @@ function withFreshDatabase(fn) {
   Config.__clearDbOverride();
   Config.clearCache();
 
-  // Triggers and sent mail live outside the spreadsheet, so a fresh database is
-  // not by itself a fresh world. Clearing triggers is safe only under the mock:
-  // on Apps Script the project's real reminder trigger belongs to production.
+  // Triggers, sent mail and the cache live outside the spreadsheet, so a fresh
+  // database is not by itself a fresh world — a draft or a cached list from the
+  // previous test would still be sitting there. Clearing triggers is safe only
+  // under the mock: on Apps Script the project's real reminder trigger belongs to
+  // production.
   if (typeof __test !== 'undefined') {
     __test.clearMail();
+    __test.clearCache();
     ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
   }
 
@@ -710,6 +713,63 @@ test('T17 a user who is not in the Users sheet is refused', function () {
     Repository.update('Users', head.Email, { Is_Active: false }, null, { actor: 'admin' });
     asUser(USERS.head, function () {
       assertApiError(api_bootstrap(), 'UNAUTHORIZED', 'deactivated account');
+    });
+  });
+});
+
+/* ------------------------------------------------------------------- drafts */
+
+test('a draft belongs to the buyer who typed it and to nobody else', function () {
+  withUsers(function () {
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_saveDraft('newCase', '', { fields: { Requester_Name: 'ของ A' } }));
+    });
+
+    asUser(USERS.buyerB, function () {
+      assertEquals(assertApiOk(api_loadDraft('newCase', '')).draft, null,
+        'the cache is shared, the drafts are not');
+    });
+
+    asUser(USERS.buyerA, function () {
+      assertEquals(assertApiOk(api_loadDraft('newCase', '')).draft.fields.Requester_Name,
+        'ของ A', 'the person who typed it gets it back');
+    });
+  });
+});
+
+test('drafts of the same form in different Cases do not mix', function () {
+  withUsers(function () {
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_saveDraft('activity', 'SRC-2026-0001', { fields: { Activity_Description: 'งานแรก' } }));
+      assertApiOk(api_saveDraft('activity', 'SRC-2026-0002', { fields: { Activity_Description: 'งานที่สอง' } }));
+
+      assertEquals(assertApiOk(api_loadDraft('activity', 'SRC-2026-0001')).draft.fields.Activity_Description,
+        'งานแรก', 'each Case keeps its own');
+      assertEquals(assertApiOk(api_loadDraft('activity', 'SRC-2026-0002')).draft.fields.Activity_Description,
+        'งานที่สอง', 'and the other is untouched');
+    });
+  });
+});
+
+test('a draft kind the system does not know is refused', function () {
+  withUsers(function () {
+    asUser(USERS.buyerA, function () {
+      assertApiError(api_saveDraft('../somewhere-else', '', { fields: {} }),
+        'VALIDATION', 'the browser cannot invent a place to write');
+      assertApiError(api_loadDraft('../somewhere-else', ''), 'VALIDATION', 'nor a place to read');
+    });
+  });
+});
+
+test('clearing a draft removes it, and a form never drafted reads as empty', function () {
+  withUsers(function () {
+    asUser(USERS.buyerA, function () {
+      assertEquals(assertApiOk(api_loadDraft('newCase', '')).draft, null, 'nothing saved yet');
+
+      assertApiOk(api_saveDraft('newCase', '', { fields: { Requester_Name: 'ชั่วคราว' } }));
+      assertApiOk(api_clearDraft('newCase', ''));
+
+      assertEquals(assertApiOk(api_loadDraft('newCase', '')).draft, null, 'gone after clearing');
     });
   });
 });
@@ -2282,6 +2342,34 @@ test('api_verifyDeployment is restricted to ADMIN', function () {
  * ==========================================================================*/
 
 if (typeof __test !== 'undefined') {
+
+  test('a stored draft that is no longer readable counts as no draft', function () {
+    withUsers(function () {
+      asUser(USERS.buyerA, function () {
+        assertApiOk(api_saveDraft('newCase', '', { fields: { Requester_Name: 'ก่อนพัง' } }));
+
+        // Whatever leaves a half-written value in the cache — an eviction mid-write,
+        // a format from an older version — must not take the form down with it.
+        Object.keys(__test.cache).forEach(function (key) {
+          if (key.indexOf('draft_') === 0) __test.cache[key] = '{ นี่ไม่ใช่ JSON';
+        });
+
+        assertEquals(assertApiOk(api_loadDraft('newCase', '')).draft, null,
+          'the form opens empty instead of failing to open');
+      });
+    });
+  });
+
+  test('a dialog cannot be closed by a click that merely ended on the backdrop', function () {
+    var source = __test.defaultHtmlFiles['client/App.js'];
+
+    assert(/backdrop\.addEventListener\('mousedown'/.test(source),
+      'the backdrop tracks where the press began, not only where it ended');
+    assert(!/backdrop\.onclick\s*=\s*function[^}]*\bclose\(\)/.test(source),
+      'a backdrop click goes through requestClose, never straight to close');
+    assert(!/\[data-close\][^;]*\.onclick\s*=\s*close\b/.test(source),
+      'the ✕ and cancel buttons go through requestClose too');
+  });
 
   test('every conditionally rendered control is null-checked before binding', function () {
     var files = __test.defaultHtmlFiles;

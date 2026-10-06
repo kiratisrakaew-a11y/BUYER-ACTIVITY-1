@@ -159,16 +159,39 @@
 
   /* ------------------------------------------------------------ new Case form */
 
+  /**
+   * The longest form in the system, and the one buyers were losing: twelve fields
+   * that take minutes to fill, in a dialog that lived only in the page. It keeps a
+   * draft, so closing it — by accident or on purpose — costs nothing.
+   */
   function openNewCaseDialog() {
+    var store = App.draft('newCase', '');
     var dialog = App.modal({
       title: 'เปิด Case ใหม่',
       submitLabel: 'สร้างงาน',
       wide: true,
       body: caseFormHtml({}),
-      onOpen: function (form) { wireBudgetType(form); },
+      onOpen: function (form) {
+        // Wired before the draft arrives, not after: the form has to look right
+        // from the first frame rather than showing both halves of the budget type
+        // until a round trip finishes. The restore then re-fires its change event,
+        // so the sub type list is rebuilt for whatever budget type comes back.
+        wireBudgetType(form);
+        store.watch(form);
+        // The restore lands after modal() has returned — a promise cannot run
+        // before the statement that created it finishes — so `dialog` is ready by
+        // the time this needs it.
+        store.restore(form).then(function (restored) {
+          if (restored) showDraftNotice(form, store, dialog);
+          // Restored work is not unsaved work — it is already kept. Closing now
+          // loses nothing, so do not ask.
+          dialog.markClean();
+        });
+      },
       onSubmit: function (form, close) {
         var payload = readCaseForm(form);
         App.api('api_createCase', payload).then(function (result) {
+          store.clear();
           close();
           App.toast('สร้างงาน ' + result.caseRecord.Case_ID + ' แล้ว', 'ok');
           App.showWarnings(result.warnings);
@@ -177,6 +200,29 @@
       }
     });
     return dialog;
+  }
+
+  /**
+   * Says where the contents came from, because a form that fills itself in is
+   * alarming otherwise, and offers the way out for a draft that is no longer wanted.
+   */
+  function showDraftNotice(form, store, dialog) {
+    var body = form.querySelector('.modal-body');
+    if (!body) return;
+
+    var bar = document.createElement('div');
+    bar.className = 'alert info';
+    bar.innerHTML = 'กู้ข้อมูลที่กรอกค้างไว้ให้แล้ว ' +
+      '<button type="button" class="subtle small" data-clear-draft>ล้างร่าง เริ่มกรอกใหม่</button>';
+    body.insertBefore(bar, body.firstChild);
+
+    bar.querySelector('[data-clear-draft]').onclick = function () {
+      store.clear();
+      form.reset();
+      wireBudgetType(form);
+      bar.remove();
+      dialog.markClean();
+    };
   }
 
   /** Shared by the create dialog and the "ข้อมูลงาน" tab so the two never drift. */

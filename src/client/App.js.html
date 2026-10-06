@@ -32,22 +32,32 @@ var App = (function () {
 
   /* ------------------------------------------------------------ server calls */
 
-  function api(name) {
-    var args = Array.prototype.slice.call(arguments, 1);
-    setBusy(1);
+  /**
+   * A quiet call moves no progress bar and is not counted as work in flight.
+   * Autosaving a draft happens while somebody is still typing: a flickering bar
+   * would read as the page doing something to their form, and counting it would
+   * keep the save button disabled between keystrokes.
+   */
+  function request(name, args, quiet) {
+    if (!quiet) setBusy(1);
     return new Promise(function (resolve, reject) {
+      function done() { if (!quiet) setBusy(-1); }
       google.script.run
         .withSuccessHandler(function (response) {
-          setBusy(-1);
+          done();
           if (!response) return reject({ code: 'INTERNAL', message: 'เซิร์ฟเวอร์ไม่ได้ตอบกลับ' });
           if (response.ok) return resolve(response.data);
           reject(response.error || { code: 'INTERNAL', message: 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ' });
         })
         .withFailureHandler(function (err) {
-          setBusy(-1);
+          done();
           reject({ code: 'INTERNAL', message: (err && err.message) || 'เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ' });
         })[name].apply(null, args);
     });
+  }
+
+  function api(name) {
+    return request(name, Array.prototype.slice.call(arguments, 1), false);
   }
 
   function setBusy(delta) {
@@ -70,6 +80,11 @@ var App = (function () {
   }
 
   /* -------------------------------------------------------------- formatting */
+
+  /** Every control in a form, in document order. */
+  function fieldsOf(form) {
+    return Array.prototype.slice.call(form.querySelectorAll('input, select, textarea'));
+  }
 
   function esc(value) {
     return String(value === null || value === undefined ? '' : value)
@@ -244,11 +259,57 @@ var App = (function () {
     document.body.appendChild(backdrop);
 
     function close() { backdrop.remove(); }
-    backdrop.querySelectorAll('[data-close]').forEach(function (b) { b.onclick = close; });
-    backdrop.onclick = function (e) { if (e.target === backdrop) close(); };
 
     var form = backdrop.querySelector('form');
     var submitButton = form.querySelector('button[type="submit"]');
+
+    // What the fields held once the dialog had finished opening. Anything that
+    // differs from this is work the person would lose by closing.
+    var baseline = null;
+    function snapshot() {
+      return fieldsOf(form).map(function (el) {
+        return el.type === 'checkbox' || el.type === 'radio' ? String(el.checked) : el.value;
+      }).join('\u0000');
+    }
+    function markClean() { baseline = snapshot(); }
+    function isDirty() { return baseline !== null && snapshot() !== baseline; }
+
+    function cancelAndClose() {
+      if (options.onCancel) options.onCancel();
+      close();
+    }
+
+    /**
+     * Closing by hand. A dialog nobody has typed into closes without comment —
+     * asking there would be noise on every glance at a read-only dialog.
+     *
+     * The question is asked with this app's own dialog rather than confirm(),
+     * which the Apps Script frame is free to suppress: a suppressed confirm reads
+     * as "no", and a form that has been typed into would then refuse to close at all.
+     */
+    function requestClose() {
+      if (!isDirty()) {
+        cancelAndClose();
+        return;
+      }
+      confirmAction('ปิดหน้าต่างนี้?', 'ข้อมูลที่กรอกไว้จะหายไป', 'ปิดหน้าต่าง')
+        .then(function (ok) { if (ok) cancelAndClose(); });
+    }
+
+    backdrop.querySelectorAll('[data-close]').forEach(function (b) { b.onclick = requestClose; });
+
+    // A click fires on the nearest common ancestor of where the button went down
+    // and where it came up. Selecting text in a field and releasing a few pixels
+    // past the edge of the dialog therefore reports the backdrop as its target —
+    // which used to throw the whole form away, with no click the person was aware
+    // of making. Both halves of the gesture have to land on the backdrop.
+    var pressedOnBackdrop = false;
+    backdrop.addEventListener('mousedown', function (e) {
+      pressedOnBackdrop = e.target === backdrop;
+    });
+    backdrop.onclick = function (e) {
+      if (e.target === backdrop && pressedOnBackdrop) requestClose();
+    };
 
     form.onsubmit = function (e) {
       e.preventDefault();
@@ -264,9 +325,10 @@ var App = (function () {
       });
     };
     if (options.onOpen) options.onOpen(form, close);
+    markClean();
     var first = form.querySelector('input, select, textarea');
     if (first) first.focus();
-    return { close: close, form: form };
+    return { close: close, form: form, markClean: markClean };
   }
 
   /**
@@ -294,14 +356,15 @@ var App = (function () {
 
   function confirmAction(title, message, confirmLabel) {
     return new Promise(function (resolve) {
-      var m = modal({
+      // Every way out of the dialog has to answer. Wiring "no" to the buttons
+      // alone left the backdrop as a silent exit: the promise never settled and
+      // whatever was waiting on the answer simply never ran, with nothing shown.
+      modal({
         title: title,
         submitLabel: confirmLabel || 'ยืนยัน',
         body: '<p>' + esc(message) + '</p>',
-        onSubmit: function (form, close) { close(); resolve(true); }
-      });
-      m.form.querySelectorAll('[data-close]').forEach(function (b) {
-        b.addEventListener('click', function () { resolve(false); });
+        onSubmit: function (form, close) { close(); resolve(true); },
+        onCancel: function () { resolve(false); }
       });
     });
   }
@@ -469,6 +532,11 @@ var App = (function () {
 
       input.addEventListener('blur', function () {
         setTimeout(function () {
+          // Switching tab or window blurs the field too, and somebody who has
+          // gone to look something up has not abandoned what they were typing —
+          // they are coming back to it. Only a blur that moves focus elsewhere on
+          // this page means they are done with the field.
+          if (document.hidden || !document.hasFocus()) return;
           close();
           // Text left behind that was never chosen is not a selection. Clearing it
           // is what makes the empty box honest: nothing was picked.
@@ -548,6 +616,122 @@ var App = (function () {
     });
   }
 
+  /* ------------------------------------------------------------------- drafts */
+
+  /**
+   * Keeps a dialog's contents alive across anything that takes the page away.
+   *
+   * `kind` names the form, `scope` separates drafts of the same form that must not
+   * bleed into one another — one per Case, say. Both are sent to the server, which
+   * decides whose draft this is; the browser never says who it is.
+   *
+   * Nothing here saves a record. A draft that is never restored simply expires.
+   */
+  function draft(kind, scope) {
+    var DEBOUNCE_MS = 2000;
+    var timer = null;
+    var lastSent = null;
+    var inFlight = null;
+
+    function read(form) {
+      var fields = {};
+      fieldsOf(form).forEach(function (el) {
+        if (!el.name) return;
+        fields[el.name] = el.type === 'checkbox' ? !!el.checked : el.value;
+      });
+      // A combobox submits a hidden id, but what the person sees — and would have
+      // to find again — is the name in the visible box. Restore both or the field
+      // comes back looking empty while holding a value.
+      var combos = {};
+      form.querySelectorAll('[data-combo]').forEach(function (box) {
+        var name = box.getAttribute('data-combo');
+        var visible = box.querySelector('.combo-input');
+        if (name && visible) combos[name] = visible.value;
+      });
+      return { fields: fields, combos: combos };
+    }
+
+    function fill(form, fields) {
+      var restored = false;
+      fieldsOf(form).forEach(function (el) {
+        if (!el.name || !Object.prototype.hasOwnProperty.call(fields, el.name)) return;
+        var value = fields[el.name];
+        if (el.type === 'checkbox') el.checked = !!value;
+        else el.value = value === null || value === undefined ? '' : value;
+        if (el.type === 'checkbox' ? el.checked : String(el.value) !== '') restored = true;
+      });
+      return restored;
+    }
+
+    /**
+     * Filling the form takes two passes, because some dropdowns only exist in
+     * terms of another: a sub type cannot be selected until the budget type above
+     * it has rebuilt the list the sub type belongs to. The first pass sets what it
+     * can, the change events let each dependent list rebuild itself, and the
+     * second pass puts back what had nowhere to go the first time round.
+     */
+    function write(form, data) {
+      if (!data || !data.fields) return false;
+
+      fill(form, data.fields);
+      fieldsOf(form).forEach(function (el) {
+        if (el.tagName === 'SELECT' && el.name && data.fields[el.name]) {
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+      var restored = fill(form, data.fields);
+
+      Object.keys(data.combos || {}).forEach(function (name) {
+        var visible = form.querySelector('[data-combo="' + name + '"] .combo-input');
+        if (visible) visible.value = data.combos[name];
+      });
+      return restored;
+    }
+
+    return {
+      /** Fills the form in. Resolves true only if something was actually put back. */
+      restore: function (form) {
+        return request('api_loadDraft', [kind, scope], true)
+          .then(function (data) { return write(form, data.draft); })
+          .catch(function () { return false; });
+      },
+
+      /**
+       * Saves a couple of seconds after typing stops, so a long form costs a
+       * handful of calls rather than one per keystroke.
+       */
+      watch: function (form) {
+        function schedule() {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(function () {
+            var values = read(form);
+            var snapshot = JSON.stringify(values);
+            if (snapshot === lastSent) return;
+            lastSent = snapshot;
+            inFlight = request('api_saveDraft', [kind, scope, values], true).catch(function () {});
+          }, DEBOUNCE_MS);
+        }
+        form.addEventListener('input', schedule);
+        form.addEventListener('change', schedule);
+      },
+
+      /**
+       * Throws the draft away, and waits for any save already on its way so that
+       * one cannot land afterwards and bring the discarded draft back.
+       *
+       * Watching continues: this is also what "start over" does, and whatever is
+       * typed next deserves keeping just as much.
+       */
+      clear: function () {
+        if (timer) clearTimeout(timer);
+        lastSent = null;
+        return (inFlight || Promise.resolve())
+          .then(function () { return request('api_clearDraft', [kind, scope], true); })
+          .catch(function () {});
+      }
+    };
+  }
+
   /* ------------------------------------------------------------------ startup */
 
   function start() {
@@ -580,6 +764,7 @@ var App = (function () {
     hasCode: hasCode,
     labelOf: labelOf,
     codeFromLabel: codeFromLabel,
+    draft: draft,
     hintOf: hintOf,
     statusLabel: statusLabel,
     statusBadgeClass: statusBadgeClass,

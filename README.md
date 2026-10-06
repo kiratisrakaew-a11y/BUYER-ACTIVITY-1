@@ -103,7 +103,7 @@ clasp login
 # สร้างโปรเจกต์เปล่าที่ https://script.google.com → New project
 # คัดลอก Script ID จาก Project Settings มาใส่ .clasp.json — อย่าแตะ rootDir
 
-clasp push      # 33 ไฟล์: server 23 + client 10
+clasp push      # 34 ไฟล์: server 24 + client 10 (clasp นับ appsscript.json ด้วยเป็น 35)
 clasp open-script
 ```
 
@@ -196,6 +196,23 @@ clasp create-deployment -i <deploymentId> -d "สรุปสั้นๆ ว่
 
 > หลังแก้ชีต Config ให้ผู้ดูแลระบบกดล้าง cache (`api_clearCache` ผ่านผู้ใช้บทบาท ADMIN)
 > หรือรอไม่เกิน 10 นาที
+
+---
+
+### ร่างของฟอร์มที่ยังไม่ได้กดบันทึก
+
+ฟอร์มเปิดงานใหม่และฟอร์มบันทึกกิจกรรม**เก็บสิ่งที่พิมพ์ค้างไว้ให้อัตโนมัติ** ปิดไปแล้วเปิดกลับมา
+ได้ของเดิม ไม่ว่าจะเพราะเผลอคลิกนอกกรอบ สลับแท็บจนเบราว์เซอร์โหลดหน้าใหม่ หรือปิดเครื่องไปเลย
+
+| | |
+|---|---|
+| เก็บที่ไหน | `CacheService` ของ Apps Script — **ไม่ใช่ไฟล์ Google Sheets** ไม่มีแถวหรือคอลัมน์ใดเพิ่ม |
+| ใครเห็น | เจ้าของร่างคนเดียว กุญแจผูกกับอีเมลที่เซิร์ฟเวอร์ยืนยันเอง |
+| อยู่ได้นานแค่ไหน | 6 ชั่วโมง แล้วหายเอง |
+| ล้างเมื่อไหร่ | เมื่อกดบันทึกสำเร็จ หรือเมื่อผู้ใช้กดปุ่ม "ล้างร่าง" |
+| `api_clearCache` ของ ADMIN ลบร่างไหม | **ไม่ลบ** — ลบเฉพาะค่า settings / lists / status |
+
+ร่างไม่ใช่การบันทึก ไม่มีอะไรลงชีต `Cases` หรือ `Activities` จนกว่าจะกดปุ่ม
 
 ---
 
@@ -329,6 +346,7 @@ src/server/
   Rules.js          กฎปิดงาน (เลข PR + บริษัท) และการย้อนสถานะอัตโนมัติ
   Bootstrap.js      จุดเดียวที่ประกอบโมดูลเข้าด้วยกัน (เรียกตอน runtime)
   CaseService.js / ActivityService.js / VendorService.js / CaseWorkflow.js / TeamService.js
+  DraftService.js   ร่างของฟอร์มที่ยังไม่ได้กดบันทึก (อยู่ใน cache ไม่ใช่ในชีต)
   DriveService.js   โฟลเดอร์ต่องานและไฟล์แนบ
   Notification.js   อีเมลและงานรายวัน
   Api.js            ฟังก์ชัน api_* ทั้งหมด (ตรวจสิทธิ์ทุกตัว)

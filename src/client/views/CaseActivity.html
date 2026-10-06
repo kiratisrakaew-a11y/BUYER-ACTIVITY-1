@@ -95,8 +95,13 @@
 
   function openForm(ctx, activity) {
     var a = activity || {};
+    // Only a new activity keeps a draft, and only within its own Case. An edit
+    // already exists on the server, so there is nothing to lose by closing it —
+    // while a stale draft of one could quietly reinstate a field somebody else
+    // has since corrected.
+    var store = activity ? null : App.draft('activity', ctx.caseId);
 
-    App.modal({
+    var dialog = App.modal({
       title: activity ? 'แก้ไขกิจกรรม' : 'บันทึกกิจกรรม',
       submitLabel: 'บันทึก',
       wide: true,
@@ -151,6 +156,7 @@
 
         App.api('api_saveActivity', ctx.caseId, payload, activity ? activity.Version : null)
           .then(function () {
+            if (store) store.clear();
             close();
             App.toast('บันทึกกิจกรรมแล้ว', 'ok');
             ctx.refresh();
@@ -162,9 +168,19 @@
           search: searchVendors,
           emptyText: 'ไม่พบผู้ขายรายนี้ในทะเบียน — เพิ่มได้ที่เมนู "ผู้ขาย" แล้วกลับมาเลือกอีกครั้ง'
         });
+        // Wired before the draft arrives, so the hint follows along by itself when
+        // the restore sets Activity_Type and fires its change event.
         wireActivityHint(form);
+        if (!store) return;
+
+        store.watch(form);
+        store.restore(form).then(function (restored) {
+          if (restored) App.toast('กู้ข้อมูลที่กรอกค้างไว้ให้แล้ว', 'ok');
+          dialog.markClean();
+        });
       }
     });
+    return dialog;
   }
 
   /**
