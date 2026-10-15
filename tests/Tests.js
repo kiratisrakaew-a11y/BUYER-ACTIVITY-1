@@ -1625,6 +1625,32 @@ test('the final amount keeps its satang', function () {
   });
 });
 
+test('a Case from before the amount existed is still fully workable', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+
+    // An open Case carrying no figure — every Case in the sheet looks like this
+    // the moment the column is added. Nothing about it may become harder to use.
+    assertEquals(currentCase(caseId).Final_Amount, null, 'starts with no figure');
+
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_updateCase(caseId, { Description: 'แก้รายละเอียดงานเก่า' },
+        currentCase(caseId).Version), 'editing a Case with no amount still works');
+      assertApiOk(api_saveActivity(caseId, activityPayload()),
+        'and so does logging an activity on it');
+    });
+
+    assertEquals(currentCase(caseId).Description, 'แก้รายละเอียดงานเก่า', 'the edit landed');
+    assertEquals(currentCase(caseId).Final_Amount, null, 'and the empty figure is still empty');
+
+    // Only the act of closing demands one, which is the whole point of putting
+    // the requirement at the gate.
+    assertApiError(closeCase(USERS.buyerA, caseId, { finalAmount: '' }),
+      'VALIDATION', 'closing is the one thing that now asks for it');
+    assertApiOk(closeCase(USERS.buyerA, caseId), 'and succeeds once it is given');
+  });
+});
+
 test('a Case closed before the amount was required is left closed', function () {
   withUsers(function () {
     var caseId = createCaseAs(USERS.buyerA);
