@@ -72,7 +72,14 @@ var Schema = (function () {
         { name: 'Company_Code', type: 'code', list: 'COMPANY' },
         { name: 'Department_Feedback', type: 'text', reserved: true, max: 2000 },
         { name: 'Drive_Folder_ID', type: 'string' },
-        { name: 'Closed_At', type: 'datetime' }
+        { name: 'Closed_At', type: 'datetime' },
+        // What the purchase actually cost, written together with the PR number at
+        // the moment of closing. Deliberately not `required`: Cases closed before
+        // this column existed carry no figure, and demanding one here would make
+        // every one of them fail validation the next time somebody edited it.
+        // CaseWorkflow.closeCase() is what insists on it, so the rule binds
+        // closures from now on and leaves the finished ones alone.
+        { name: 'Final_Amount', type: 'number', min: 0 }
       ]
     },
 
