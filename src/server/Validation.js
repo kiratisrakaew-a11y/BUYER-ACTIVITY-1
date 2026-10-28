@@ -104,19 +104,29 @@ var Validation = (function () {
     }
   }
 
-  /** A `code` column must hold a code that exists in its Config_Lists list. */
+  /**
+   * A `code` column must hold a code that exists in its Config_Lists list.
+   * A `codes` column holds several of them in one cell and every one must exist.
+   *
+   * The bad codes are reported together rather than one per round, so somebody
+   * fixing a row by hand in the sheet sees everything wrong with it at once.
+   */
   function checkList(tableName, column, value, payload, options, problems) {
-    if (column.type !== 'code' || !column.list) return;
+    if ((column.type !== 'code' && column.type !== 'codes') || !column.list) return;
     var parentValue = null;
     if (column.parent) {
       parentValue = Object.prototype.hasOwnProperty.call(payload, column.parent)
         ? payload[column.parent]
         : (options.existing ? options.existing[column.parent] : null);
     }
-    if (!Config.isValidCode(column.list, value, parentValue)) {
+    var codes = column.type === 'codes' ? Utils.splitCodes(value) : [value];
+    var invalid = codes.filter(function (code) {
+      return !Config.isValidCode(column.list, code, parentValue);
+    });
+    if (invalid.length) {
       problems.push({
         field: column.name,
-        message: column.name + ' "' + value + '" ไม่อยู่ในรายการที่กำหนด' +
+        message: column.name + ' "' + invalid.join('", "') + '" ไม่อยู่ในรายการที่กำหนด' +
           (parentValue ? ' สำหรับ ' + parentValue : '')
       });
     }

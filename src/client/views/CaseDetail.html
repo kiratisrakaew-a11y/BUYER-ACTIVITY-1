@@ -158,7 +158,7 @@
           row('แก้ไขล่าสุด', App.fmtDateTime(c.Updated_At) + ' โดย ' + c.Updated_By +
             ' (เวอร์ชัน ' + c.Version + ')') +
           row('เลข PR (EPICOR)', c.PR_No ? c.PR_No + (c.PR_Date ? ' · ' + App.fmtDate(c.PR_Date) : '') : '—') +
-          row('บริษัทที่จัดซื้อ', c.Company_Code ? App.labelOf('COMPANY', c.Company_Code) : '—') +
+          row('บริษัทที่จัดซื้อ', c.Company_Code ? App.labelsOf('COMPANY', c.Company_Code) : '—') +
           (c.Closed_At ? row('ปิดงานเมื่อ', App.fmtDateTime(c.Closed_At)) : '') +
         '</dl>';
 

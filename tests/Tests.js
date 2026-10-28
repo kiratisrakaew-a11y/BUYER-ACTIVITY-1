@@ -1540,10 +1540,16 @@ function closeCase(email, caseId, overrides) {
   var payload = {
     prNo: 'PR-2026-0001',
     prDate: '2026-02-20',
-    companyCode: 'PLANB',
+    companyCodes: ['PLANB'],
     reason: ''
   };
   Object.keys(overrides || {}).forEach(function (k) { payload[k] = overrides[k]; });
+  // A test that names the old single-company field means to send that field on
+  // its own: companyCodes takes precedence, so leaving both in would quietly
+  // test the new path twice and the old one never.
+  if (Object.prototype.hasOwnProperty.call(overrides || {}, 'companyCode')) {
+    delete payload.companyCodes;
+  }
   if (!Object.prototype.hasOwnProperty.call(payload, 'version')) {
     payload.version = currentCase(caseId).Version;
   }
@@ -1580,6 +1586,114 @@ test('T4 a company that is not in Config_Lists cannot close a Case', function ()
       'VALIDATION', 'the company must come from the register');
     assertEquals(currentCase(caseId).Status, 'OPEN', 'still open');
     assertEquals(currentCase(caseId).PR_No, '', 'and nothing was written');
+  });
+});
+
+/** A second company to tick, since setup() seeds only the one. */
+function addCompany(code, label) {
+  Config.getSheet('Config_Lists').appendRow(['COMPANY', code, label, '', 20, true]);
+  Config.clearCache();
+}
+
+test('T4b a Case bought for two companies keeps both', function () {
+  withUsers(function () {
+    addCompany('AQUA', 'บริษัท อควา คอร์เปอเรท จำกัด (มหาชน)');
+    var caseId = createCaseAs(USERS.buyerA);
+
+    var closed = assertApiOk(closeCase(USERS.buyerA, caseId,
+      { companyCodes: ['PLANB', 'AQUA'] })).caseRecord;
+
+    assertEquals(closed.Status, 'CLOSED', 'closed');
+    assertEquals(closed.Company_Code, 'PLANB,AQUA', 'both companies, in one cell');
+
+    var bundle = asUser(USERS.buyerA, function () { return assertApiOk(api_getCase(caseId)); });
+    assertEquals(bundle.rules.ok, true, 'the rules are satisfied');
+    assertDeepEquals(bundle.rules.companyCodes, ['PLANB', 'AQUA'], 'read back as two codes');
+    assertContains(bundle.rules.companyLabel, 'แพลน บี', 'the label names the first');
+    assertContains(bundle.rules.companyLabel, 'อควา', 'and the second');
+
+    assert(!Rules.recheckCaseRules(caseId).reverted, 'and nothing pulls it back open');
+  });
+});
+
+test('T4c a company ticked twice, or typed with spaces, is stored once', function () {
+  withUsers(function () {
+    addCompany('AQUA', 'บริษัท อควา คอร์เปอเรท จำกัด (มหาชน)');
+    var caseId = createCaseAs(USERS.buyerA);
+
+    // What an administrator typing the cell by hand would send.
+    var closed = assertApiOk(closeCase(USERS.buyerA, caseId,
+      { companyCodes: 'PLANB, PLANB , AQUA' })).caseRecord;
+
+    assertEquals(closed.Company_Code, 'PLANB,AQUA', 'one canonical form, no duplicate');
+  });
+});
+
+test('T4d ticking nothing leaves the Case open', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+    assertApiError(closeCase(USERS.buyerA, caseId, { companyCodes: [] }),
+      'VALIDATION', 'at least one company is required');
+    assertEquals(currentCase(caseId).Status, 'OPEN', 'still open');
+    assertEquals(currentCase(caseId).PR_No, '', 'and nothing was written');
+  });
+});
+
+test('T4e every company that is not in the register is named at once', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+    var error = assertApiError(closeCase(USERS.buyerA, caseId,
+      { companyCodes: ['PLANB', 'GONE_A', 'GONE_B'] }),
+      'VALIDATION', 'the companies must come from the register');
+    assertContains(error.message, 'GONE_A', 'the first bad code is named');
+    assertContains(error.message, 'GONE_B', 'and so is the second, in the same message');
+    assertEquals(currentCase(caseId).Status, 'OPEN', 'still open');
+  });
+});
+
+test('T4f a Case closed before this existed still holds, and the old page can still close one', function () {
+  withUsers(function () {
+    // Exactly what the single-select screen sent, which is also what every row
+    // already in the sheet holds: one bare code, no comma.
+    var caseId = createCaseAs(USERS.buyerA);
+    var closed = assertApiOk(closeCase(USERS.buyerA, caseId, { companyCode: 'PLANB' })).caseRecord;
+    assertEquals(closed.Company_Code, 'PLANB', 'stored as it always was — no migration');
+
+    var bundle = asUser(USERS.buyerA, function () { return assertApiOk(api_getCase(caseId)); });
+    assertEquals(bundle.rules.ok, true, 'the rules still pass');
+    assertDeepEquals(bundle.rules.companyCodes, ['PLANB'], 'one code reads as a list of one');
+    assertContains(bundle.rules.companyLabel, 'แพลน บี', 'and the label is unchanged');
+
+    assert(!Rules.recheckCaseRules(caseId).reverted, 'the daily recheck leaves it closed');
+
+    // And it can still be reopened, which is what a buyer would notice first.
+    asUser(USERS.head, function () {
+      assertApiOk(api_reopenCase(caseId, 'หน่วยงานขอแก้ไขรายการ'));
+    });
+    assertEquals(currentCase(caseId).Status, 'OPEN', 'reopened');
+  });
+});
+
+test('T4g retiring one of several companies reopens the Case, as it always did', function () {
+  withUsers(function () {
+    addCompany('AQUA', 'บริษัท อควา คอร์เปอเรท จำกัด (มหาชน)');
+    var caseId = createCaseAs(USERS.buyerA);
+    assertApiOk(closeCase(USERS.buyerA, caseId, { companyCodes: ['PLANB', 'AQUA'] }));
+
+    // The administrator switches AQUA off in Config_Lists.
+    var sheet = Config.getSheet('Config_Lists');
+    var rows = sheet.getDataRange().getValues();
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0] === 'COMPANY' && rows[i][1] === 'AQUA') {
+        sheet.getRange(i + 1, 6).setValue(false);
+      }
+    }
+    Config.clearCache();
+
+    var result = Rules.recheckCaseRules(caseId);
+    assert(!!result.reverted, 'the Case was pulled back open');
+    assertEquals(currentCase(caseId).Status, 'OPEN', 'back to OPEN');
+    assertContains(result.messages[0], 'AQUA', 'and the message names the company that went away');
   });
 });
 

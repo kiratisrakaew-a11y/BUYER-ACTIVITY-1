@@ -21,13 +21,34 @@ var CaseWorkflow = (function () {
    * The owning buyer does this themselves: they are the one holding the number
    * EPICOR gave them.
    */
+  /**
+   * The companies this Case was bought for, however the page sent them.
+   *
+   * `companyCodes` is what the current close dialog sends, as an array of ticked
+   * boxes. `companyCode` is what the single-select version sent, and it is still
+   * accepted: when the new version goes live, somebody has the old page sitting
+   * open in a tab, and they should be able to finish closing their Case instead
+   * of getting an error they cannot explain. Utils.joinCodes() then drops the
+   * duplicates and writes the one canonical form.
+   */
+  function readCompanyCodes(data) {
+    var raw = data.companyCodes !== undefined && data.companyCodes !== null
+      ? data.companyCodes
+      : data.companyCode;
+    if (raw === undefined || raw === null) return [];
+    var list = Object.prototype.toString.call(raw) === '[object Array]' ? raw : [raw];
+    return list.reduce(function (codes, item) {
+      return codes.concat(Utils.splitCodes(item));
+    }, []);
+  }
+
   function closeCase(user, caseId, payload) {
     var data = payload || {};
     var caseRecord = CaseService.requireCase(caseId);
     Auth.assertCanEditCase(user, caseRecord);
 
     var prNo = Utils.isBlank(data.prNo) ? '' : String(data.prNo).trim();
-    var company = Utils.isBlank(data.companyCode) ? '' : String(data.companyCode).trim();
+    var company = Utils.joinCodes(readCompanyCodes(data));
     var problems = [];
     if (!prNo) problems.push({ field: 'PR_No', message: 'กรุณากรอกเลข PR จากระบบ EPICOR' });
     if (!company) problems.push({ field: 'Company_Code', message: 'กรุณาเลือกบริษัทที่จัดซื้อ' });

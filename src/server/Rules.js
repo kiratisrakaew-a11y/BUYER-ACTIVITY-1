@@ -22,19 +22,33 @@ var Rules = (function () {
    * `caseRecord` may be the row as it stands or the row as it would stand after
    * a patch, which is what lets closeCase() check the PR number it is about to
    * write rather than the blank one already in the sheet.
+   *
+   * Company_Code holds one code or several, comma separated, because a purchase
+   * can be made on behalf of more than one company in the group. A cell holding
+   * a single code is read as a list of one and takes exactly the path it always
+   * did, which is why no Case closed before this existed is pulled back open.
    */
   function evaluate(caseRecord) {
     var blockers = [];
     var prNo = Utils.isBlank(caseRecord.PR_No) ? '' : String(caseRecord.PR_No).trim();
     var company = Utils.isBlank(caseRecord.Company_Code) ? '' : String(caseRecord.Company_Code).trim();
+    var companyCodes = Utils.splitCodes(company);
 
     if (!prNo) {
       blockers.push('ยังไม่ได้ระบุเลข PR จากระบบ EPICOR');
     }
-    if (!company) {
+    if (!companyCodes.length) {
       blockers.push('ยังไม่ได้ระบุบริษัทที่จัดซื้อ');
-    } else if (!Config.isValidCode('COMPANY', company)) {
-      blockers.push('บริษัทที่จัดซื้อ "' + company + '" ไม่อยู่ในรายการที่ผู้ดูแลระบบกำหนดไว้');
+    } else {
+      // Every bad code at once: a Case carrying two retired companies should not
+      // need two rounds of fixing to find that out.
+      var invalid = companyCodes.filter(function (code) {
+        return !Config.isValidCode('COMPANY', code);
+      });
+      if (invalid.length) {
+        blockers.push('บริษัทที่จัดซื้อ "' + invalid.join('", "') +
+          '" ไม่อยู่ในรายการที่ผู้ดูแลระบบกำหนดไว้');
+      }
     }
 
     return {
@@ -42,7 +56,10 @@ var Rules = (function () {
       blockers: blockers,
       prNo: prNo,
       company: company,
-      companyLabel: company ? Config.labelOf('COMPANY', company) : ''
+      companyCodes: companyCodes,
+      companyLabel: companyCodes.map(function (code) {
+        return Config.labelOf('COMPANY', code);
+      }).join(' · ')
     };
   }
 

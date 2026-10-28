@@ -7,10 +7,14 @@
  *
  * Column descriptor:
  *   name      — header text written into row 1 of the sheet
- *   type      — 'string' | 'text' | 'code' | 'email' | 'url' | 'date' | 'datetime'
- *               | 'number' | 'int' | 'bool'
+ *   type      — 'string' | 'text' | 'code' | 'codes' | 'email' | 'url' | 'date'
+ *               | 'datetime' | 'number' | 'int' | 'bool'
+ *               'codes' is several codes from one list in a single cell, comma
+ *               separated; a cell holding one code reads back as a list of one,
+ *               so a column can become 'codes' without touching the sheet
  *   required  — server-side validation rejects empty values
- *   list      — Config_Lists.List_Name this code must belong to
+ *   list      — Config_Lists.List_Name this code (or every one of these codes)
+ *               must belong to
  *   parent    — the column whose value filters `list` via Config_Lists.Parent_Code
  *   reserved  — column exists in the sheet but no M1 UI writes it (SPEC §10.6)
  *   max       — maximum string length accepted from the client
@@ -69,7 +73,11 @@ var Schema = (function () {
         { name: 'Status', type: 'code', required: true },
         { name: 'PR_No', type: 'string', max: 50 },
         { name: 'PR_Date', type: 'date' },
-        { name: 'Company_Code', type: 'code', list: 'COMPANY' },
+        // Several codes in one cell, comma separated — a purchase can be made on
+        // behalf of more than one company in the group. The column name and the
+        // sheet are unchanged; a row written when this held a single code reads
+        // back as a list of one, so nothing already closed needs converting.
+        { name: 'Company_Code', type: 'codes', list: 'COMPANY' },
         { name: 'Department_Feedback', type: 'text', reserved: true, max: 2000 },
         { name: 'Drive_Folder_ID', type: 'string' },
         { name: 'Closed_At', type: 'datetime' }

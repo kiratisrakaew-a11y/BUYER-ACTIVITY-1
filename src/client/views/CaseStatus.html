@@ -95,19 +95,29 @@
             App.esc(c.PR_No || '') + '">', true) +
           App.caseForm.field('PR_Date', 'วันที่ออก PR',
             '<input type="date" name="PR_Date" value="' + App.esc(App.toInputDate(c.PR_Date)) + '">') +
-          '<div class="field span-all"><label for="Company_Code">บริษัทที่จัดซื้อ <span class="req">*</span></label>' +
-            '<select id="Company_Code" name="Company_Code" required>' +
-            App.optionsFor('COMPANY', c.Company_Code) + '</select></div>' +
+          '<div class="field span-all"><label>บริษัทที่จัดซื้อ <span class="req">*</span> ' +
+            '<span class="muted">(เลือกได้มากกว่าหนึ่งบริษัท)</span></label>' +
+            App.checkboxesFor('COMPANY', 'Company_Code', c.Company_Code) + '</div>' +
           '<div class="field span-all"><label for="closeNote">หมายเหตุ (ไม่บังคับ)</label>' +
             '<textarea id="closeNote" name="reason" maxlength="500"></textarea></div>' +
         '</div>',
       onSubmit: function (form, close) {
         var prNo = form.PR_No.value.trim();
-        if (!prNo || !form.Company_Code.value) return;
+        if (!prNo) return;
+        // `required` on a checkbox demands that one box, not one of the group,
+        // so the group is checked here instead — and out loud, because a dialog
+        // that just refuses to submit tells the user nothing.
+        var companyCodes = Array.prototype.map.call(
+          form.querySelectorAll('[name="Company_Code"]:checked'),
+          function (box) { return box.value; });
+        if (!companyCodes.length) {
+          App.toast('กรุณาเลือกบริษัทที่จัดซื้ออย่างน้อยหนึ่งบริษัท', 'bad');
+          return;
+        }
         App.api('api_closeCase', ctx.caseId, {
           prNo: prNo,
           prDate: form.PR_Date.value,
-          companyCode: form.Company_Code.value,
+          companyCodes: companyCodes,
           version: c.Version,
           reason: form.reason.value.trim()
         }).then(function () {
