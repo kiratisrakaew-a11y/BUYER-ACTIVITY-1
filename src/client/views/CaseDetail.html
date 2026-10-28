@@ -159,10 +159,6 @@
             ' (เวอร์ชัน ' + c.Version + ')') +
           row('เลข PR (EPICOR)', c.PR_No ? c.PR_No + (c.PR_Date ? ' · ' + App.fmtDate(c.PR_Date) : '') : '—') +
           row('บริษัทที่จัดซื้อ', c.Company_Code ? App.labelOf('COMPANY', c.Company_Code) : '—') +
-          // Zero is a real total, so the dash is reserved for Cases closed before
-          // this was recorded — testing truthiness here would hide a genuine 0.
-          row('มูลค่ารวมสุดท้าย', c.Final_Amount === null || c.Final_Amount === undefined ||
-            c.Final_Amount === '' ? '—' : App.fmtMoney(c.Final_Amount) + ' บาท') +
           (c.Closed_At ? row('ปิดงานเมื่อ', App.fmtDateTime(c.Closed_At)) : '') +
         '</dl>';
 

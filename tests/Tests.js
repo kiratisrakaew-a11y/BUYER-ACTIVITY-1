@@ -1541,7 +1541,6 @@ function closeCase(email, caseId, overrides) {
     prNo: 'PR-2026-0001',
     prDate: '2026-02-20',
     companyCode: 'PLANB',
-    finalAmount: 125000,
     reason: ''
   };
   Object.keys(overrides || {}).forEach(function (k) { payload[k] = overrides[k]; });
@@ -1581,100 +1580,6 @@ test('T4 a company that is not in Config_Lists cannot close a Case', function ()
       'VALIDATION', 'the company must come from the register');
     assertEquals(currentCase(caseId).Status, 'OPEN', 'still open');
     assertEquals(currentCase(caseId).PR_No, '', 'and nothing was written');
-  });
-});
-
-test('closing needs the final amount of the purchase', function () {
-  withUsers(function () {
-    var caseId = createCaseAs(USERS.buyerA);
-
-    assertApiError(closeCase(USERS.buyerA, caseId, { finalAmount: '' }),
-      'VALIDATION', 'an empty box is not an answer');
-    assertApiError(closeCase(USERS.buyerA, caseId, { finalAmount: '   ' }),
-      'VALIDATION', 'nor is whitespace');
-    assertApiError(closeCase(USERS.buyerA, caseId, { finalAmount: 'หนึ่งแสน' }),
-      'VALIDATION', 'nor words');
-    assertApiError(closeCase(USERS.buyerA, caseId, { finalAmount: -1 }),
-      'VALIDATION', 'a purchase cannot cost less than nothing');
-
-    assertEquals(currentCase(caseId).Status, 'OPEN', 'no attempt moved the Case');
-    assertEquals(currentCase(caseId).PR_No, '', 'and nothing was written');
-  });
-});
-
-test('a purchase that closed at no cost is still a closed purchase', function () {
-  withUsers(function () {
-    var caseId = createCaseAs(USERS.buyerA);
-
-    // Replacements under warranty, insurance claims and goods thrown in free all
-    // close at zero. Zero is an answer; blank is the absence of one.
-    var closed = assertApiOk(closeCase(USERS.buyerA, caseId, { finalAmount: 0 })).caseRecord;
-
-    assertEquals(closed.Status, 'CLOSED', 'zero closes the Case');
-    assertEquals(closed.Final_Amount, 0, 'and is stored as zero, not as blank');
-  });
-});
-
-test('the final amount keeps its satang', function () {
-  withUsers(function () {
-    var caseId = createCaseAs(USERS.buyerA);
-    var closed = assertApiOk(closeCase(USERS.buyerA, caseId, { finalAmount: '1234.56' })).caseRecord;
-
-    assertEquals(closed.Final_Amount, 1234.56, 'the figure is not rounded to whole baht');
-    assertEquals(currentCase(caseId).Final_Amount, 1234.56, 'and reads back from the sheet intact');
-  });
-});
-
-test('a Case from before the amount existed is still fully workable', function () {
-  withUsers(function () {
-    var caseId = createCaseAs(USERS.buyerA);
-
-    // An open Case carrying no figure — every Case in the sheet looks like this
-    // the moment the column is added. Nothing about it may become harder to use.
-    assertEquals(currentCase(caseId).Final_Amount, null, 'starts with no figure');
-
-    asUser(USERS.buyerA, function () {
-      assertApiOk(api_updateCase(caseId, { Description: 'แก้รายละเอียดงานเก่า' },
-        currentCase(caseId).Version), 'editing a Case with no amount still works');
-      assertApiOk(api_saveActivity(caseId, activityPayload()),
-        'and so does logging an activity on it');
-    });
-
-    assertEquals(currentCase(caseId).Description, 'แก้รายละเอียดงานเก่า', 'the edit landed');
-    assertEquals(currentCase(caseId).Final_Amount, null, 'and the empty figure is still empty');
-
-    // Only the act of closing demands one, which is the whole point of putting
-    // the requirement at the gate.
-    assertApiError(closeCase(USERS.buyerA, caseId, { finalAmount: '' }),
-      'VALIDATION', 'closing is the one thing that now asks for it');
-    assertApiOk(closeCase(USERS.buyerA, caseId), 'and succeeds once it is given');
-  });
-});
-
-test('a Case closed before the amount was required is left closed', function () {
-  withUsers(function () {
-    var caseId = createCaseAs(USERS.buyerA);
-    assertApiOk(closeCase(USERS.buyerA, caseId));
-
-    // Stands in for every Case closed before this column existed: PR number and
-    // company present, figure simply absent. The requirement lives at the closing
-    // gate, not in Rules.evaluate(), precisely so the recheck leaves these alone —
-    // putting it in the rule would reopen dozens of finished purchases.
-    Repository.update('Cases', caseId, { Final_Amount: '' }, null, {
-      actor: 'test@example.com',
-      reason: 'จำลองงานที่ปิดก่อนมีคอลัมน์มูลค่า',
-      caseId: caseId
-    });
-
-    var outcome = Rules.recheckCaseRules(caseId);
-
-    assertEquals(outcome.reverted, null, 'nothing was reopened');
-    assertDeepEquals(outcome.messages, [], 'and nothing was reported as wrong');
-    assertEquals(currentCase(caseId).Status, 'CLOSED', 'the finished purchase stays finished');
-    // An empty amount cell reads back as null, which is the value the Case page
-    // branches on to show a dash rather than printing "0 บาท" for a figure nobody
-    // ever entered.
-    assertEquals(currentCase(caseId).Final_Amount, null, 'an absent figure reads as null');
   });
 });
 
@@ -1849,7 +1754,6 @@ test('the Change_Log of a Case is readable by anyone who may read the Case', fun
       return assertApiOk(api_getChangeLog(caseId)).entries;
     });
     assert(entries.length > 5, 'a full history is there');
-
     // Every adjacent pair, not the two ends with a strict >. The clock here is the
     // real one at millisecond resolution, and this whole history can be written
     // inside a single millisecond on a warm run — which made the strict comparison

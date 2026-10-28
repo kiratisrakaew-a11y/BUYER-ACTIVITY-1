@@ -76,10 +76,10 @@
   });
 
   /**
-   * The PR number, the buying company and the final amount are asked for here
-   * rather than on the edit form, because they are the evidence the closure rests
-   * on: the server writes them and the status in one update, so none of them can
-   * exist without the others.
+   * The PR number and the buying company are asked for here rather than on the
+   * edit form, because they are the evidence the closure rests on: the server
+   * writes them and the status in one update, so neither can exist without the
+   * other.
    */
   function openCloseDialog(ctx) {
     var c = ctx.caseRecord;
@@ -87,8 +87,8 @@
       title: 'ปิดงาน ' + c.Case_ID,
       submitLabel: 'ปิดงาน',
       body:
-        '<p class="muted">กรอกเลข PR ที่ออกจากระบบ EPICOR บริษัทที่จัดซื้อ ' +
-          'และมูลค่ารวมสุดท้ายของโครงการ ระบบจะบันทึกทั้งหมดพร้อมกับการปิดงาน</p>' +
+        '<p class="muted">กรอกเลข PR ที่ออกจากระบบ EPICOR และบริษัทที่จัดซื้อ ' +
+          'ระบบจะบันทึกทั้งสองอย่างพร้อมกับการปิดงาน</p>' +
         '<div class="grid two">' +
           App.caseForm.field('PR_No', 'เลข PR (EPICOR)',
             '<input type="text" name="PR_No" required maxlength="50" autocomplete="off" value="' +
@@ -98,25 +98,16 @@
           '<div class="field span-all"><label for="Company_Code">บริษัทที่จัดซื้อ <span class="req">*</span></label>' +
             '<select id="Company_Code" name="Company_Code" required>' +
             App.optionsFor('COMPANY', c.Company_Code) + '</select></div>' +
-          // step allows satang; min stops a negative total being typed in at all.
-          '<div class="field span-all"><label for="Final_Amount">มูลค่ารวมสุดท้ายของโครงการ (บาท) ' +
-            '<span class="req">*</span></label>' +
-            '<input type="number" id="Final_Amount" name="Final_Amount" required min="0" step="0.01" ' +
-            'inputmode="decimal" autocomplete="off" value="' +
-            App.esc(c.Final_Amount === null || c.Final_Amount === undefined ? '' : c.Final_Amount) +
-            '"></div>' +
           '<div class="field span-all"><label for="closeNote">หมายเหตุ (ไม่บังคับ)</label>' +
             '<textarea id="closeNote" name="reason" maxlength="500"></textarea></div>' +
         '</div>',
       onSubmit: function (form, close) {
         var prNo = form.PR_No.value.trim();
-        var amount = form.Final_Amount.value.trim();
-        if (!prNo || !form.Company_Code.value || amount === '') return;
+        if (!prNo || !form.Company_Code.value) return;
         App.api('api_closeCase', ctx.caseId, {
           prNo: prNo,
           prDate: form.PR_Date.value,
           companyCode: form.Company_Code.value,
-          finalAmount: amount,
           version: c.Version,
           reason: form.reason.value.trim()
         }).then(function () {

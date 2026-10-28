@@ -12,21 +12,14 @@ var CaseWorkflow = (function () {
   /* ----------------------------------------------------------------- close */
 
   /**
-   * Closing a Case is one decision, not an edit followed by a status change: the
-   * PR number, the buying company and what the purchase cost are the evidence the
-   * closure rests on. They therefore travel with the transition, which writes them
-   * and the status in a single versioned update — so a Case can never be found
-   * CLOSED without its PR number, nor holding a PR number it was never closed under.
+   * Closing a Case is one decision, not an edit followed by a status change:
+   * the PR number and the buying company are the evidence the closure rests on.
+   * They therefore travel with the transition, which writes them and the status
+   * in a single versioned update — so a Case can never be found CLOSED without
+   * its PR number, nor holding a PR number it was never closed under.
    *
    * The owning buyer does this themselves: they are the one holding the number
    * EPICOR gave them.
-   *
-   * The three requirements are checked here rather than in Rules.evaluate(), and
-   * that placement is the whole design. Rules.recheck() reopens any closed Case
-   * that no longer satisfies evaluate(); putting the amount there would mean every
-   * Case closed before this field existed stopped satisfying the rule, and the
-   * system would quietly reopen dozens of finished purchases under the SYSTEM name.
-   * Checking at the gate binds closures from today without rewriting the past.
    */
   function closeCase(user, caseId, payload) {
     var data = payload || {};
@@ -38,30 +31,11 @@ var CaseWorkflow = (function () {
     var problems = [];
     if (!prNo) problems.push({ field: 'PR_No', message: 'กรุณากรอกเลข PR จากระบบ EPICOR' });
     if (!company) problems.push({ field: 'Company_Code', message: 'กรุณาเลือกบริษัทที่จัดซื้อ' });
-
-    // Blank and zero are different answers. A purchase really can close at nothing
-    // — a replacement under warranty, an insurance claim, goods thrown in free —
-    // and Utils.isBlank(0) is false, so zero passes while an empty box does not.
-    var amount = null;
-    if (Utils.isBlank(data.finalAmount)) {
-      problems.push({
-        field: 'Final_Amount',
-        message: 'กรุณากรอกมูลค่ารวมสุดท้ายของโครงการ'
-      });
-    } else {
-      amount = Number(data.finalAmount);
-      if (isNaN(amount)) {
-        problems.push({ field: 'Final_Amount', message: 'มูลค่ารวมสุดท้ายต้องเป็นตัวเลข' });
-      } else if (amount < 0) {
-        problems.push({ field: 'Final_Amount', message: 'มูลค่ารวมสุดท้ายต้องไม่ติดลบ' });
-      }
-    }
-
     if (problems.length) {
       throw Err.validation(problems[0].message, { fields: problems });
     }
 
-    var patch = { PR_No: prNo, Company_Code: company, Final_Amount: amount };
+    var patch = { PR_No: prNo, Company_Code: company };
     if (!Utils.isBlank(data.prDate)) patch.PR_Date = data.prDate;
 
     var reason = Utils.isBlank(data.reason) ? '' : String(data.reason).trim();
