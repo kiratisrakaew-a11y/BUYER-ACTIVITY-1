@@ -1647,6 +1647,15 @@ test('T4d zero is a real amount, but a negative or non-numeric one is not', func
       'VALIDATION', 'a negative amount is refused');
     assertApiError(closeCase(USERS.buyerA, other, { prNo: 'PR-2026-0102', finalAmount: 'หนึ่งล้าน' }),
       'VALIDATION', 'and so is text');
+
+    // The close dialog strips thousands separators before it sends the figure,
+    // and the server must not do that stripping itself: "1,850,000" reaching
+    // here means something built the request wrongly, and Number() would turn
+    // it into NaN — but a looser parse would store 1. Refusing it keeps the
+    // stripping in exactly one place.
+    assertApiError(closeCase(USERS.buyerA, other, { prNo: 'PR-2026-0103', finalAmount: '1,850,000' }),
+      'VALIDATION', 'the server does not guess what a comma meant');
+
     assertEquals(currentCase(other).Status, 'OPEN', 'still open');
   });
 });

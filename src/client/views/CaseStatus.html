@@ -98,8 +98,13 @@
           '<div class="field span-all"><label for="Company_Code">บริษัทที่จัดซื้อ <span class="req">*</span></label>' +
             '<select id="Company_Code" name="Company_Code" required>' +
             App.optionsFor('COMPANY', c.Company_Code) + '</select></div>' +
+          // type="text", not type="number": a number input treats "1,850,000" as
+          // invalid and hands back an empty value, so pasting a figure out of a
+          // BOQ or out of Excel reads to the person as "you left this blank".
+          // The separators are stripped on the way out instead; inputmode keeps
+          // the numeric keypad on a phone.
           App.caseForm.field('Final_Amount', 'มูลค่ารวมสุดท้าย (บาท)',
-            '<input type="number" name="Final_Amount" required min="0" step="0.01" ' +
+            '<input type="text" name="Final_Amount" required ' +
             'inputmode="decimal" autocomplete="off" value="' +
             App.esc(c.Final_Amount === '' || c.Final_Amount === null || c.Final_Amount === undefined
               ? '' : c.Final_Amount) + '">', true) +
@@ -119,7 +124,25 @@
         '</div>',
       onSubmit: function (form, close) {
         var prNo = form.PR_No.value.trim();
-        if (!prNo || !form.Company_Code.value || !form.Final_Amount.value) return;
+        if (!prNo || !form.Company_Code.value) return;
+
+        // A text input gets no numeric check from the browser, so the thousands
+        // separators come off here and the result is checked here. The server
+        // checks it again and does not strip anything — it should not have to
+        // guess what a comma was meant to be.
+        var amount = form.Final_Amount.value.replace(/[,\s]/g, '');
+        if (!amount) return;
+        if (isNaN(Number(amount))) {
+          App.toast('มูลค่ารวมสุดท้ายต้องเป็นตัวเลข', 'bad');
+          form.Final_Amount.focus();
+          return;
+        }
+        if (Number(amount) < 0) {
+          App.toast('มูลค่ารวมสุดท้ายต้องไม่ติดลบ', 'bad');
+          form.Final_Amount.focus();
+          return;
+        }
+
         // The combobox submits a hidden input, and a hidden input is barred from
         // the browser's own required check — so this is the only thing standing
         // between a typed-but-unchosen name and the server.
@@ -133,7 +156,7 @@
           prNo: prNo,
           prDate: form.PR_Date.value,
           companyCode: form.Company_Code.value,
-          finalAmount: form.Final_Amount.value,
+          finalAmount: amount,
           awardedVendorId: form.Awarded_Vendor_ID.value,
           version: c.Version,
           reason: form.reason.value.trim()
