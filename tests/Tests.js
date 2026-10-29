@@ -1535,20 +1535,29 @@ function moveTo(email, caseId, toStatus, reason) {
   });
 }
 
+/**
+ * A vendor id that exists in the register, for the tests whose subject is not
+ * the vendor. One is minted on demand so every closing test does not have to
+ * set up a vendor it does not care about.
+ */
+function anyVendorId() {
+  var existing = Repository.readAll('Vendors');
+  if (existing.length) return existing[0].Vendor_ID;
+  return createVendorAs(USERS.buyerA).vendor.Vendor_ID;
+}
+
 /** Closes a Case the way the screen does, with the version the sheet holds. */
 function closeCase(email, caseId, overrides) {
   var payload = {
     prNo: 'PR-2026-0001',
     prDate: '2026-02-20',
-    companyCodes: ['PLANB'],
+    companyCode: 'PLANB',
+    finalAmount: 125000,
     reason: ''
   };
   Object.keys(overrides || {}).forEach(function (k) { payload[k] = overrides[k]; });
-  // A test that names the old single-company field means to send that field on
-  // its own: companyCodes takes precedence, so leaving both in would quietly
-  // test the new path twice and the old one never.
-  if (Object.prototype.hasOwnProperty.call(overrides || {}, 'companyCode')) {
-    delete payload.companyCodes;
+  if (!Object.prototype.hasOwnProperty.call(payload, 'awardedVendorId')) {
+    payload.awardedVendorId = anyVendorId();
   }
   if (!Object.prototype.hasOwnProperty.call(payload, 'version')) {
     payload.version = currentCase(caseId).Version;
@@ -1589,111 +1598,125 @@ test('T4 a company that is not in Config_Lists cannot close a Case', function ()
   });
 });
 
-/** A second company to tick, since setup() seeds only the one. */
-function addCompany(code, label) {
-  Config.getSheet('Config_Lists').appendRow(['COMPANY', code, label, '', 20, true]);
-  Config.clearCache();
-}
-
-test('T4b a Case bought for two companies keeps both', function () {
+test('T4b closing writes the amount and the awarded vendor with the status', function () {
   withUsers(function () {
-    addCompany('AQUA', 'บริษัท อควา คอร์เปอเรท จำกัด (มหาชน)');
     var caseId = createCaseAs(USERS.buyerA);
+    var vendorId = createVendorAs(USERS.buyerA).vendor.Vendor_ID;
+    var before = currentCase(caseId).Version;
 
     var closed = assertApiOk(closeCase(USERS.buyerA, caseId,
-      { companyCodes: ['PLANB', 'AQUA'] })).caseRecord;
+      { finalAmount: 1850000.5, awardedVendorId: vendorId })).caseRecord;
 
     assertEquals(closed.Status, 'CLOSED', 'closed');
-    assertEquals(closed.Company_Code, 'PLANB,AQUA', 'both companies, in one cell');
+    assertEquals(Number(closed.Final_Amount), 1850000.5, 'the amount was written');
+    // Stored as a real number, not text: a column of strings cannot be summed,
+    // charted or compared, which is the whole reason this column exists.
+    assertEquals(typeof currentCase(caseId).Final_Amount, 'number', 'as a number in the sheet');
+    assertEquals(closed.Awarded_Vendor_ID, vendorId, 'and the winning vendor');
+    assertEquals(closed.Version, before + 1, 'one update, not three');
 
+    // The Case page has to be able to name the vendor, not just hold its id.
     var bundle = asUser(USERS.buyerA, function () { return assertApiOk(api_getCase(caseId)); });
-    assertEquals(bundle.rules.ok, true, 'the rules are satisfied');
-    assertDeepEquals(bundle.rules.companyCodes, ['PLANB', 'AQUA'], 'read back as two codes');
-    assertContains(bundle.rules.companyLabel, 'แพลน บี', 'the label names the first');
-    assertContains(bundle.rules.companyLabel, 'อควา', 'and the second');
-
-    assert(!Rules.recheckCaseRules(caseId).reverted, 'and nothing pulls it back open');
+    assert(!!bundle.vendorNames[vendorId], 'the awarded vendor name travels to the page');
   });
 });
 
-test('T4c a company ticked twice, or typed with spaces, is stored once', function () {
-  withUsers(function () {
-    addCompany('AQUA', 'บริษัท อควา คอร์เปอเรท จำกัด (มหาชน)');
-    var caseId = createCaseAs(USERS.buyerA);
-
-    // What an administrator typing the cell by hand would send.
-    var closed = assertApiOk(closeCase(USERS.buyerA, caseId,
-      { companyCodes: 'PLANB, PLANB , AQUA' })).caseRecord;
-
-    assertEquals(closed.Company_Code, 'PLANB,AQUA', 'one canonical form, no duplicate');
-  });
-});
-
-test('T4d ticking nothing leaves the Case open', function () {
+test('T4c closing without the amount or the vendor leaves the Case open', function () {
   withUsers(function () {
     var caseId = createCaseAs(USERS.buyerA);
-    assertApiError(closeCase(USERS.buyerA, caseId, { companyCodes: [] }),
-      'VALIDATION', 'at least one company is required');
-    assertEquals(currentCase(caseId).Status, 'OPEN', 'still open');
+
+    assertApiError(closeCase(USERS.buyerA, caseId, { finalAmount: '' }),
+      'VALIDATION', 'the amount is required');
+    assertApiError(closeCase(USERS.buyerA, caseId, { awardedVendorId: '' }),
+      'VALIDATION', 'so is the vendor');
+
+    assertEquals(currentCase(caseId).Status, 'OPEN', 'neither attempt moved the Case');
     assertEquals(currentCase(caseId).PR_No, '', 'and nothing was written');
   });
 });
 
-test('T4e every company that is not in the register is named at once', function () {
+test('T4d zero is a real amount, but a negative or non-numeric one is not', function () {
+  withUsers(function () {
+    // Goods under warranty, an insurance claim, something thrown in free.
+    var free = createCaseAs(USERS.buyerA);
+    assertEquals(Number(assertApiOk(closeCase(USERS.buyerA, free,
+      { finalAmount: 0 })).caseRecord.Final_Amount), 0, 'zero closes the Case');
+
+    var other = createCaseAs(USERS.buyerA, { Request_Ref: 'MEMO-2026-004' });
+    assertApiError(closeCase(USERS.buyerA, other, { prNo: 'PR-2026-0101', finalAmount: -1 }),
+      'VALIDATION', 'a negative amount is refused');
+    assertApiError(closeCase(USERS.buyerA, other, { prNo: 'PR-2026-0102', finalAmount: 'หนึ่งล้าน' }),
+      'VALIDATION', 'and so is text');
+    assertEquals(currentCase(other).Status, 'OPEN', 'still open');
+  });
+});
+
+test('T4e a vendor that is not on the register cannot close a Case', function () {
   withUsers(function () {
     var caseId = createCaseAs(USERS.buyerA);
-    var error = assertApiError(closeCase(USERS.buyerA, caseId,
-      { companyCodes: ['PLANB', 'GONE_A', 'GONE_B'] }),
-      'VALIDATION', 'the companies must come from the register');
-    assertContains(error.message, 'GONE_A', 'the first bad code is named');
-    assertContains(error.message, 'GONE_B', 'and so is the second, in the same message');
+    assertApiError(closeCase(USERS.buyerA, caseId, { awardedVendorId: 'VEN-99999' }),
+      'VALIDATION', 'the vendor must come from the register');
     assertEquals(currentCase(caseId).Status, 'OPEN', 'still open');
   });
 });
 
-test('T4f a Case closed before this existed still holds, and the old page can still close one', function () {
+test('T4f the awarded vendor need not have logged an activity on the Case', function () {
   withUsers(function () {
-    // Exactly what the single-select screen sent, which is also what every row
-    // already in the sheet holds: one bare code, no comma.
+    // Somebody who negotiated by phone and never wrote it down should still be
+    // able to close their Case — blocking that is worse than a thin timeline.
     var caseId = createCaseAs(USERS.buyerA);
-    var closed = assertApiOk(closeCase(USERS.buyerA, caseId, { companyCode: 'PLANB' })).caseRecord;
-    assertEquals(closed.Company_Code, 'PLANB', 'stored as it always was — no migration');
+    var vendorId = createVendorAs(USERS.buyerA).vendor.Vendor_ID;
+    assertEquals(Repository.queryByCase('Activities', caseId).length, 0, 'no activity was logged');
+
+    assertApiOk(closeCase(USERS.buyerA, caseId, { awardedVendorId: vendorId }),
+      'the Case closes anyway');
+  });
+});
+
+test('T4g a Case bought for several companies closes under the MULTI code', function () {
+  withUsers(function () {
+    assert(Config.isValidCode('COMPANY', 'MULTI'), 'setup() seeds the shared-purchase code');
+    var caseId = createCaseAs(USERS.buyerA);
+
+    var closed = assertApiOk(closeCase(USERS.buyerA, caseId,
+      { companyCode: 'MULTI', reason: 'ซื้อร่วมกับ Aqua' })).caseRecord;
+
+    assertEquals(closed.Company_Code, 'MULTI', 'stored like any other company code');
+    // Which companies is in the closing note, which lives in the history.
+    var reasons = logsFor('Cases', caseId).filter(function (l) {
+      return l.Reason && l.Reason.indexOf('Aqua') !== -1;
+    });
+    assertEquals(reasons.length > 0, true, 'and the detail is in the Change_Log');
+  });
+});
+
+test('T4h a Case closed before these columns existed stays closed and stays editable', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+    assertApiOk(closeCase(USERS.buyerA, caseId));
+
+    // Exactly what every row closed before this release holds: a PR number and a
+    // company, and nothing in the two new columns.
+    Repository.update('Cases', caseId, { Final_Amount: '', Awarded_Vendor_ID: '' }, null,
+      { actor: 'admin@example.com' });
 
     var bundle = asUser(USERS.buyerA, function () { return assertApiOk(api_getCase(caseId)); });
-    assertEquals(bundle.rules.ok, true, 'the rules still pass');
-    assertDeepEquals(bundle.rules.companyCodes, ['PLANB'], 'one code reads as a list of one');
-    assertContains(bundle.rules.companyLabel, 'แพลน บี', 'and the label is unchanged');
+    assertEquals(bundle.rules.ok, true, 'the closing rules are still satisfied');
+    assertEquals(bundle.rules.blockers.length, 0, 'with nothing outstanding');
 
-    assert(!Rules.recheckCaseRules(caseId).reverted, 'the daily recheck leaves it closed');
+    // THE point of this test: the daily sweep must not reopen finished purchases.
+    assert(!Rules.recheckCaseRules(caseId).reverted, 'the recheck leaves it closed');
+    assertEquals(currentCase(caseId).Status, 'CLOSED', 'still closed');
 
-    // And it can still be reopened, which is what a buyer would notice first.
+    // And the row must stay writable — a required column would fail here.
     asUser(USERS.head, function () {
       assertApiOk(api_reopenCase(caseId, 'หน่วยงานขอแก้ไขรายการ'));
     });
     assertEquals(currentCase(caseId).Status, 'OPEN', 'reopened');
-  });
-});
-
-test('T4g retiring one of several companies reopens the Case, as it always did', function () {
-  withUsers(function () {
-    addCompany('AQUA', 'บริษัท อควา คอร์เปอเรท จำกัด (มหาชน)');
-    var caseId = createCaseAs(USERS.buyerA);
-    assertApiOk(closeCase(USERS.buyerA, caseId, { companyCodes: ['PLANB', 'AQUA'] }));
-
-    // The administrator switches AQUA off in Config_Lists.
-    var sheet = Config.getSheet('Config_Lists');
-    var rows = sheet.getDataRange().getValues();
-    for (var i = 1; i < rows.length; i++) {
-      if (rows[i][0] === 'COMPANY' && rows[i][1] === 'AQUA') {
-        sheet.getRange(i + 1, 6).setValue(false);
-      }
-    }
-    Config.clearCache();
-
-    var result = Rules.recheckCaseRules(caseId);
-    assert(!!result.reverted, 'the Case was pulled back open');
-    assertEquals(currentCase(caseId).Status, 'OPEN', 'back to OPEN');
-    assertContains(result.messages[0], 'AQUA', 'and the message names the company that went away');
+    asUser(USERS.buyerA, function () {
+      assertApiOk(api_updateCase(caseId, { Description: 'แก้ไขหลังเปิดงานใหม่' },
+        currentCase(caseId).Version));
+    });
   });
 });
 
@@ -2268,6 +2291,11 @@ test('verifyDeployment warns about the sample dropdown values setup() seeds', fu
     assertEquals(sample.status, 'WARN', 'still the examples');
     assertContains(sample.detail, 'DEPARTMENT', 'names the list');
     assertContains(sample.detail, 'OPS', 'and shows the values that are still in place');
+    // The shared-purchase code is seeded, so a register holding only it and the
+    // parent company still counts as untouched — otherwise seeding MULTI would
+    // have quietly switched this warning off for every new installation.
+    assertContains(sample.detail, 'COMPANY', 'the company register is still flagged');
+    assertContains(sample.detail, 'MULTI', 'including the seeded shared-purchase code');
 
     assertEquals(report.ok, true, 'a warning does not make the system unusable');
     assertEquals(report.readyForProduction, false, 'but it is not ready for the whole department');

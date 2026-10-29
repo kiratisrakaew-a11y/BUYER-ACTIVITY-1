@@ -87,37 +87,54 @@
       title: 'ปิดงาน ' + c.Case_ID,
       submitLabel: 'ปิดงาน',
       body:
-        '<p class="muted">กรอกเลข PR ที่ออกจากระบบ EPICOR และบริษัทที่จัดซื้อ ' +
-          'ระบบจะบันทึกทั้งสองอย่างพร้อมกับการปิดงาน</p>' +
+        '<p class="muted">กรอกเลข PR ที่ออกจากระบบ EPICOR บริษัทที่จัดซื้อ มูลค่ารวมสุดท้าย ' +
+          'และผู้ขายที่ได้งาน ระบบจะบันทึกทั้งหมดพร้อมกับการปิดงาน</p>' +
         '<div class="grid two">' +
           App.caseForm.field('PR_No', 'เลข PR (EPICOR)',
             '<input type="text" name="PR_No" required maxlength="50" autocomplete="off" value="' +
             App.esc(c.PR_No || '') + '">', true) +
           App.caseForm.field('PR_Date', 'วันที่ออก PR',
             '<input type="date" name="PR_Date" value="' + App.esc(App.toInputDate(c.PR_Date)) + '">') +
-          '<div class="field span-all"><label>บริษัทที่จัดซื้อ <span class="req">*</span> ' +
-            '<span class="muted">(เลือกได้มากกว่าหนึ่งบริษัท)</span></label>' +
-            App.checkboxesFor('COMPANY', 'Company_Code', c.Company_Code) + '</div>' +
+          '<div class="field span-all"><label for="Company_Code">บริษัทที่จัดซื้อ <span class="req">*</span></label>' +
+            '<select id="Company_Code" name="Company_Code" required>' +
+            App.optionsFor('COMPANY', c.Company_Code) + '</select></div>' +
+          App.caseForm.field('Final_Amount', 'มูลค่ารวมสุดท้าย (บาท)',
+            '<input type="number" name="Final_Amount" required min="0" step="0.01" ' +
+            'inputmode="decimal" autocomplete="off" value="' +
+            App.esc(c.Final_Amount === '' || c.Final_Amount === null || c.Final_Amount === undefined
+              ? '' : c.Final_Amount) + '">', true) +
+          App.caseForm.field('Awarded_Vendor_ID__input', 'ผู้ขายที่ได้งาน',
+            App.combobox.html({
+              name: 'Awarded_Vendor_ID',
+              placeholder: 'พิมพ์ชื่อผู้ขาย หรือเลขผู้เสียภาษี',
+              text: c.Awarded_Vendor_ID
+                ? ((ctx.vendorNames || {})[c.Awarded_Vendor_ID] || c.Awarded_Vendor_ID)
+                : '',
+              value: c.Awarded_Vendor_ID || ''
+            }), true) +
           '<div class="field span-all"><label for="closeNote">หมายเหตุ (ไม่บังคับ)</label>' +
-            '<textarea id="closeNote" name="reason" maxlength="500"></textarea></div>' +
+            '<textarea id="closeNote" name="reason" maxlength="500" ' +
+            'placeholder="งานที่ซื้อร่วมกันหลายบริษัท ให้เลือกบริษัท ' +
+            '&quot;หลายบริษัท&quot; แล้วระบุที่นี่ว่าบริษัทใดบ้าง"></textarea></div>' +
         '</div>',
       onSubmit: function (form, close) {
         var prNo = form.PR_No.value.trim();
-        if (!prNo) return;
-        // `required` on a checkbox demands that one box, not one of the group,
-        // so the group is checked here instead — and out loud, because a dialog
-        // that just refuses to submit tells the user nothing.
-        var companyCodes = Array.prototype.map.call(
-          form.querySelectorAll('[name="Company_Code"]:checked'),
-          function (box) { return box.value; });
-        if (!companyCodes.length) {
-          App.toast('กรุณาเลือกบริษัทที่จัดซื้ออย่างน้อยหนึ่งบริษัท', 'bad');
+        if (!prNo || !form.Company_Code.value || !form.Final_Amount.value) return;
+        // The combobox submits a hidden input, and a hidden input is barred from
+        // the browser's own required check — so this is the only thing standing
+        // between a typed-but-unchosen name and the server.
+        if (!form.Awarded_Vendor_ID.value) {
+          App.toast('กรุณาเลือกผู้ขายที่ได้งานจากรายการ', 'bad');
+          var box = form.querySelector('#Awarded_Vendor_ID__input');
+          if (box) box.focus();
           return;
         }
         App.api('api_closeCase', ctx.caseId, {
           prNo: prNo,
           prDate: form.PR_Date.value,
-          companyCodes: companyCodes,
+          companyCode: form.Company_Code.value,
+          finalAmount: form.Final_Amount.value,
+          awardedVendorId: form.Awarded_Vendor_ID.value,
           version: c.Version,
           reason: form.reason.value.trim()
         }).then(function () {
@@ -125,7 +142,22 @@
           App.toast('ปิดงานแล้ว', 'ok');
           ctx.refresh();
         }).catch(App.showError);
+      },
+      onOpen: function (form) {
+        App.combobox.wire(form, {
+          name: 'Awarded_Vendor_ID',
+          search: searchVendors,
+          emptyText: 'ไม่พบผู้ขายรายนี้ในทะเบียน — เพิ่มได้ที่เมนู "ผู้ขาย" แล้วกลับมาเลือกอีกครั้ง'
+        });
       }
+    });
+  }
+
+  function searchVendors(query) {
+    return App.api('api_searchVendors', query).then(function (data) {
+      return data.vendors.map(function (v) {
+        return { id: v.Vendor_ID, label: v.Vendor_Name, hint: v.Tax_ID || '' };
+      });
     });
   }
 

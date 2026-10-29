@@ -138,7 +138,10 @@ var CaseService = (function () {
     return {
       caseRecord: Repository.toClient(caseRecord),
       activities: activities.map(Repository.toClient),
-      vendorNames: vendorNamesFor(activities),
+      // The awarded vendor goes in alongside the activity vendors: a Case can be
+      // closed against a vendor it never logged an activity with, and that name
+      // has to resolve too or the Case page shows a bare VEN-00123.
+      vendorNames: vendorNamesFor(activities, [caseRecord.Awarded_Vendor_ID]),
       driveFolderUrl: DriveService.folderUrl(caseRecord.Drive_Folder_ID),
       permissions: {
         canEdit: Auth.canEditCase(user, caseRecord),
@@ -295,9 +298,10 @@ var CaseService = (function () {
    * is still the vendor that old activity was about, and the timeline should say
    * so by name rather than falling back to a bare id.
    */
-  function vendorNamesFor(activities) {
+  function vendorNamesFor(activities, extraIds) {
     var ids = Utils.unique(activities
       .map(function (a) { return a.Vendor_ID; })
+      .concat(extraIds || [])
       .filter(function (id) { return !Utils.isBlank(id); }));
     if (ids.length === 0) return {};
 

@@ -38,7 +38,10 @@ var Verify = (function () {
     DEPARTMENT: ['OPS', 'MKT', 'FIN'],
     // A Case is closed against the company that bought the goods, so a register
     // holding only the parent company means the affiliates were never entered.
-    COMPANY: ['PLANB']
+    // MULTI belongs here too: it is seeded alongside PLANB, so leaving it out
+    // would make a register of exactly those two look like somebody's own work
+    // and silence this warning.
+    COMPANY: ['PLANB', 'MULTI']
   };
 
   var TRANSITIONS = {

@@ -155,29 +155,6 @@ var Utils = (function () {
   }
 
   /**
-   * A cell holding several codes, read back as a list: "PLANB,AQUA" -> two codes.
-   *
-   * Tolerant on the way in and strict on the way out. Spaces around a comma are
-   * accepted because a person typing the cell by hand in the sheet will put them
-   * there, and duplicates are dropped because ticking the same box twice is not
-   * two answers. joinCodes writes the one canonical form back, so the column does
-   * not slowly fill with "PLANB, AQUA" and "PLANB,AQUA" as different strings.
-   *
-   * One code is just a list of one, which is why every row written before this
-   * existed keeps working untouched.
-   */
-  function splitCodes(value) {
-    if (isBlank(value)) return [];
-    return unique(String(value).split(',')
-      .map(function (code) { return code.trim(); })
-      .filter(function (code) { return code !== ''; }));
-  }
-
-  function joinCodes(codes) {
-    return splitCodes((codes || []).join(',')).join(',');
-  }
-
-  /**
    * Turns scattered row numbers into contiguous [start, end] runs, so a caller can
    * read them with a handful of getValues() calls instead of one per row.
    */
@@ -228,8 +205,6 @@ var Utils = (function () {
     pad: pad,
     normalizeForCompare: normalizeForCompare,
     unique: unique,
-    splitCodes: splitCodes,
-    joinCodes: joinCodes,
     groupRuns: groupRuns,
     groupBy: groupBy
   };

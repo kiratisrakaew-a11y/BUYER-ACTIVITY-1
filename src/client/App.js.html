@@ -147,54 +147,6 @@ var App = (function () {
   }
 
   /**
-   * Thai labels for a cell holding several codes: "PLANB,AQUA" reads as
-   * "แพลน บี มีเดีย · อควา คอร์ปอเรท".
-   *
-   * A cell holding one code gives one label, so this is a safe drop-in wherever
-   * labelOf was reading a column that can now hold more than one code.
-   */
-  function labelsOf(listName, value) {
-    return splitCodes(value).map(function (code) {
-      return labelOf(listName, code);
-    }).join(' · ');
-  }
-
-  /** Mirror of Utils.splitCodes on the server: ", " tolerated, duplicates dropped. */
-  function splitCodes(value) {
-    if (value === null || value === undefined || String(value).trim() === '') return [];
-    var seen = {};
-    return String(value).split(',').map(function (code) {
-      return code.trim();
-    }).filter(function (code) {
-      if (code === '' || seen[code]) return false;
-      seen[code] = true;
-      return true;
-    });
-  }
-
-  /**
-   * A checkbox per entry of a config list, for a field that takes more than one
-   * answer. `selected` is whatever the record holds — one code or several.
-   *
-   * Every box carries the same `name`, which is what makes the group one field.
-   * Read it back with form.querySelectorAll('[name="X"]:checked'), never with
-   * form.X: a shared name turns that into a RadioNodeList whose .value reports
-   * only the first ticked box, so the second company would vanish silently.
-   */
-  function checkboxesFor(listName, name, selected) {
-    var chosen = splitCodes(selected);
-    var html = '<div class="checkbox-group">';
-    listOf(listName).forEach(function (it) {
-      var checked = chosen.indexOf(it.code) !== -1 ? ' checked' : '';
-      html += '<label class="checkbox-option">' +
-        '<input type="checkbox" name="' + esc(name) + '" value="' + esc(it.code) + '"' + checked + '>' +
-        '<span>' + esc(it.label) + '</span>' +
-        '</label>';
-    });
-    return html + '</div>';
-  }
-
-  /**
    * The inverse of labelOf: a column pasted out of a BOQ holds "ตารางเมตร", not "SQM".
    * Matches the code first, then the Thai label, and hands back anything it does
    * not recognise so the preview can mark that row instead of silently blanking it.
@@ -811,9 +763,6 @@ var App = (function () {
     listOf: listOf,
     hasCode: hasCode,
     labelOf: labelOf,
-    labelsOf: labelsOf,
-    splitCodes: splitCodes,
-    checkboxesFor: checkboxesFor,
     codeFromLabel: codeFromLabel,
     draft: draft,
     hintOf: hintOf,

@@ -12,51 +12,79 @@ var CaseWorkflow = (function () {
   /* ----------------------------------------------------------------- close */
 
   /**
-   * Closing a Case is one decision, not an edit followed by a status change:
-   * the PR number and the buying company are the evidence the closure rests on.
-   * They therefore travel with the transition, which writes them and the status
-   * in a single versioned update — so a Case can never be found CLOSED without
-   * its PR number, nor holding a PR number it was never closed under.
+   * Closing a Case is one decision, not an edit followed by a status change: the
+   * PR number, the buying company, what the purchase cost and who it was bought
+   * from are the evidence the closure rests on. They therefore travel with the
+   * transition, which writes them and the status in a single versioned update —
+   * so a Case can never be found CLOSED without its PR number, nor holding a PR
+   * number it was never closed under.
    *
    * The owning buyer does this themselves: they are the one holding the number
    * EPICOR gave them.
-   */
-  /**
-   * The companies this Case was bought for, however the page sent them.
    *
-   * `companyCodes` is what the current close dialog sends, as an array of ticked
-   * boxes. `companyCode` is what the single-select version sent, and it is still
-   * accepted: when the new version goes live, somebody has the old page sitting
-   * open in a tab, and they should be able to finish closing their Case instead
-   * of getting an error they cannot explain. Utils.joinCodes() then drops the
-   * duplicates and writes the one canonical form.
+   * All four requirements are checked here rather than in Rules.evaluate(), and
+   * that placement is the whole design. Rules.recheck() reopens any closed Case
+   * that no longer satisfies evaluate(), and dailyReminderJob() sweeps every
+   * closed Case through it once a day. Putting the amount or the vendor there
+   * would mean every Case closed before those columns existed stopped satisfying
+   * the rule, and the system would quietly reopen finished purchases under the
+   * SYSTEM name within 24 hours. Checking at the gate binds closures from today
+   * without rewriting the past.
    */
-  function readCompanyCodes(data) {
-    var raw = data.companyCodes !== undefined && data.companyCodes !== null
-      ? data.companyCodes
-      : data.companyCode;
-    if (raw === undefined || raw === null) return [];
-    var list = Object.prototype.toString.call(raw) === '[object Array]' ? raw : [raw];
-    return list.reduce(function (codes, item) {
-      return codes.concat(Utils.splitCodes(item));
-    }, []);
-  }
-
   function closeCase(user, caseId, payload) {
     var data = payload || {};
     var caseRecord = CaseService.requireCase(caseId);
     Auth.assertCanEditCase(user, caseRecord);
 
     var prNo = Utils.isBlank(data.prNo) ? '' : String(data.prNo).trim();
-    var company = Utils.joinCodes(readCompanyCodes(data));
+    var company = Utils.isBlank(data.companyCode) ? '' : String(data.companyCode).trim();
     var problems = [];
     if (!prNo) problems.push({ field: 'PR_No', message: 'กรุณากรอกเลข PR จากระบบ EPICOR' });
     if (!company) problems.push({ field: 'Company_Code', message: 'กรุณาเลือกบริษัทที่จัดซื้อ' });
+
+    // Blank and zero are different answers. A purchase really can close at nothing
+    // — a replacement under warranty, an insurance claim, goods thrown in free —
+    // and Utils.isBlank(0) is false, so zero passes while an empty box does not.
+    var amount = null;
+    if (Utils.isBlank(data.finalAmount)) {
+      problems.push({
+        field: 'Final_Amount',
+        message: 'กรุณากรอกมูลค่ารวมสุดท้ายของโครงการ'
+      });
+    } else {
+      amount = Number(data.finalAmount);
+      if (isNaN(amount)) {
+        problems.push({ field: 'Final_Amount', message: 'มูลค่ารวมสุดท้ายต้องเป็นตัวเลข' });
+      } else if (amount < 0) {
+        problems.push({ field: 'Final_Amount', message: 'มูลค่ารวมสุดท้ายต้องไม่ติดลบ' });
+      }
+    }
+
+    // The winning vendor has to be one on the register, for the same reason an
+    // activity's vendor does: a free-text name makes the purchase unsearchable.
+    // It is not restricted to vendors this Case logged activities against —
+    // somebody who forgot to log the negotiation would otherwise be unable to
+    // close their Case at all, and blocking a closure is worse than a stray id.
+    var vendorId = Utils.isBlank(data.awardedVendorId) ? '' : String(data.awardedVendorId).trim();
+    if (!vendorId) {
+      problems.push({ field: 'Awarded_Vendor_ID', message: 'กรุณาเลือกผู้ขายที่ได้งาน' });
+    } else if (!Repository.findById('Vendors', vendorId)) {
+      problems.push({
+        field: 'Awarded_Vendor_ID',
+        message: 'ไม่พบผู้ขายรายนี้ในทะเบียนผู้ขาย'
+      });
+    }
+
     if (problems.length) {
       throw Err.validation(problems[0].message, { fields: problems });
     }
 
-    var patch = { PR_No: prNo, Company_Code: company };
+    var patch = {
+      PR_No: prNo,
+      Company_Code: company,
+      Final_Amount: amount,
+      Awarded_Vendor_ID: vendorId
+    };
     if (!Utils.isBlank(data.prDate)) patch.PR_Date = data.prDate;
 
     var reason = Utils.isBlank(data.reason) ? '' : String(data.reason).trim();
