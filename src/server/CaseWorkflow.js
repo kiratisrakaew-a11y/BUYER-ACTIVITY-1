@@ -9,6 +9,19 @@
  */
 var CaseWorkflow = (function () {
 
+  /**
+   * The Config_Lists COMPANY code standing for "bought for more than one company
+   * in the group". The company field holds one code, so this is how a shared
+   * purchase is recorded — and the names of the companies then live only in the
+   * closing note, which is why picking this code makes that note compulsory.
+   *
+   * This is the one place the literal is written down, and it is a literal: an
+   * administrator who renames this code in the sheet turns the rule below into
+   * a no-op, and shared purchases go back to being recorded as "several, unnamed".
+   * Label_TH can be reworded freely; `MULTI` itself must stay.
+   */
+  var MULTI_COMPANY_CODE = 'MULTI';
+
   /* ----------------------------------------------------------------- close */
 
   /**
@@ -38,9 +51,22 @@ var CaseWorkflow = (function () {
 
     var prNo = Utils.isBlank(data.prNo) ? '' : String(data.prNo).trim();
     var company = Utils.isBlank(data.companyCode) ? '' : String(data.companyCode).trim();
+    var reason = Utils.isBlank(data.reason) ? '' : String(data.reason).trim();
     var problems = [];
     if (!prNo) problems.push({ field: 'PR_No', message: 'กรุณากรอกเลข PR จากระบบ EPICOR' });
     if (!company) problems.push({ field: 'Company_Code', message: 'กรุณาเลือกบริษัทที่จัดซื้อ' });
+
+    // Closing a Case is normally allowed with no note at all, and that stays
+    // true — except for the one answer that is not an answer on its own. A Case
+    // closed as MULTI with an empty note records that several companies were
+    // involved and loses which, and nothing can recover that afterwards: the note
+    // is only written at the moment of closing.
+    if (company === MULTI_COMPANY_CODE && !reason) {
+      problems.push({
+        field: 'reason',
+        message: 'เลือกหลายบริษัทแล้ว กรุณาระบุในหมายเหตุว่าเป็นบริษัทใดบ้าง'
+      });
+    }
 
     // Blank and zero are different answers. A purchase really can close at nothing
     // — a replacement under warranty, an insurance claim, goods thrown in free —
@@ -87,7 +113,6 @@ var CaseWorkflow = (function () {
     };
     if (!Utils.isBlank(data.prDate)) patch.PR_Date = data.prDate;
 
-    var reason = Utils.isBlank(data.reason) ? '' : String(data.reason).trim();
     var result = StatusEngine.transition(user, caseId, 'CLOSED', data.version, reason, patch);
     return { caseRecord: result.caseRecord, from: result.from, to: result.to, warnings: [] };
   }

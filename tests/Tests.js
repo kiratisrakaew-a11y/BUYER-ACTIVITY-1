@@ -1699,6 +1699,25 @@ test('T4g a Case bought for several companies closes under the MULTI code', func
   });
 });
 
+test('T4g2 the shared-purchase code cannot be used without saying which companies', function () {
+  withUsers(function () {
+    var caseId = createCaseAs(USERS.buyerA);
+
+    // MULTI on its own records "several companies" and loses which ones, and the
+    // note is only written at the moment of closing — so there is no fixing it
+    // later. This is the one choice that makes the note compulsory.
+    assertApiError(closeCase(USERS.buyerA, caseId, { companyCode: 'MULTI', reason: '' }),
+      'VALIDATION', 'the note is required for a shared purchase');
+    assertApiError(closeCase(USERS.buyerA, caseId, { companyCode: 'MULTI', reason: '   ' }),
+      'VALIDATION', 'and whitespace is not an answer');
+    assertEquals(currentCase(caseId).Status, 'OPEN', 'still open');
+
+    // Every other company closes with no note at all, exactly as before.
+    assertApiOk(closeCase(USERS.buyerA, caseId, { companyCode: 'PLANB', reason: '' }),
+      'a single company needs no note');
+  });
+});
+
 test('T4h a Case closed before these columns existed stays closed and stays editable', function () {
   withUsers(function () {
     var caseId = createCaseAs(USERS.buyerA);

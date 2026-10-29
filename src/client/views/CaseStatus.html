@@ -152,6 +152,16 @@
           if (box) box.focus();
           return;
         }
+
+        // "Several companies" on its own says nothing, so the note carries the
+        // names and becomes compulsory for that one choice. The server enforces
+        // this too; catching it here is what puts the cursor in the right box.
+        var note = form.reason.value.trim();
+        if (form.Company_Code.value === 'MULTI' && !note) {
+          App.toast('เลือกหลายบริษัทแล้ว กรุณาระบุในหมายเหตุว่าเป็นบริษัทใดบ้าง', 'bad');
+          form.reason.focus();
+          return;
+        }
         App.api('api_closeCase', ctx.caseId, {
           prNo: prNo,
           prDate: form.PR_Date.value,
@@ -159,7 +169,7 @@
           finalAmount: amount,
           awardedVendorId: form.Awarded_Vendor_ID.value,
           version: c.Version,
-          reason: form.reason.value.trim()
+          reason: note
         }).then(function () {
           close();
           App.toast('ปิดงานแล้ว', 'ok');
