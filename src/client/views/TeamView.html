@@ -60,7 +60,8 @@
       return '<tr class="' + (overdue ? 'overdue' : '') + '">' +
         '<td class="nowrap"><button type="button" class="link-btn" data-open="' + App.esc(c.Case_ID) + '">' +
           App.esc(c.Case_ID) + '</button></td>' +
-        '<td>' + App.esc(c.Description) + '</td>' +
+        '<td>' + App.esc(c.Request_Ref) +
+          '<div class="faint">' + App.esc(c.Requester_Name) + '</div></td>' +
         '<td class="nowrap"><span class="badge ' + App.statusBadgeClass(c.Status) + '">' +
           App.esc(App.statusLabel(c.Status)) + '</span></td>' +
         '<td class="nowrap">' + (c.readiness && c.readiness.ok
@@ -80,7 +81,7 @@
     }).join('');
 
     return '<div class="table-wrap"><table><thead><tr>' +
-      '<th>รหัสงาน</th><th>รายละเอียด</th><th>สถานะ</th><th>เลข PR</th>' +
+      '<th>รหัสงาน</th><th>หัวข้อ / ผู้ขอ</th><th>สถานะ</th><th>เลข PR</th>' +
       '<th>สิ่งที่ต้องทำต่อ</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 

@@ -106,8 +106,8 @@
       return '<tr class="' + (overdue ? 'overdue' : '') + '">' +
         '<td class="nowrap"><button type="button" class="link-btn" data-case="' + App.esc(c.Case_ID) + '">' +
           App.esc(c.Case_ID) + '</button></td>' +
-        '<td>' + App.esc(c.Description) + '<div class="faint">' + App.esc(c.Request_Ref) + ' · ' +
-          App.esc(c.Requester_Name) + '</div></td>' +
+        '<td>' + App.esc(c.Request_Ref) +
+          '<div class="faint">' + App.esc(c.Requester_Name) + '</div></td>' +
         '<td class="nowrap">' + App.esc(App.labelOf('BUDGET_TYPE', c.Budget_Type)) +
           '<div class="faint">' + App.esc(budgetDetail(c)) + '</div></td>' +
         '<td class="nowrap"><span class="badge ' + App.statusBadgeClass(c.Status) + '">' +
@@ -124,7 +124,7 @@
       : '';
 
     return note + '<div class="table-wrap"><table><thead><tr>' +
-      '<th>รหัสงาน</th><th>รายละเอียด</th><th>ประเภทงบ</th><th>สถานะ</th>' +
+      '<th>รหัสงาน</th><th>หัวข้อ / ผู้ขอ</th><th>ประเภทงบ</th><th>สถานะ</th>' +
       '<th>เลข PR / บริษัท</th><th>สิ่งที่ต้องทำต่อ</th><th>วันที่รับเรื่อง</th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
